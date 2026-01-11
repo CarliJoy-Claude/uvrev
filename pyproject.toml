@@ -1,0 +1,93 @@
+[project]
+name = "uvrev"
+version = "0.1.0"
+description = "uv env manager to enable conda-style revision tracking"
+readme = "README.md"
+authors = [
+    { name = "Carli* Freudenberg", email = "kound@posteo.de" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8",
+    "platformdirs>=4",
+    "tomlkit>=0.13",
+]
+
+[project.scripts]
+uvrev = "uvrev:cli.cli"
+
+[build-system]
+requires = ["uv_build>=0.9.24,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "coverage>=7.13.1",
+    "mypy>=1.19.1",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.2",
+    "ruff>=0.14.11",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
+parallel = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 100
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+# Exclude common non-source paths
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "build",
+    "dist",
+    "node_modules",
+]
+
+[tool.ruff.lint]
+# Sensible default rule set
+select = [
+    "F",    # Pyflakes
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "C4",   # flake8-comprehensions
+]
+
+# Rules that are commonly noisy or conflict with formatters
+ignore = [
+    "E203", # whitespace before ':' (Black compatibility)
+    "E266", # too many leading '#' for block comment
+    "E501", # line length handled by formatter
+]
+fixable = ["ALL"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+force-single-line = false
+known-first-party = ["src"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests can be more permissive
+"tests/**" = [
+    "S101", # assert usage
+    "PLR2004", # magic values
+]
