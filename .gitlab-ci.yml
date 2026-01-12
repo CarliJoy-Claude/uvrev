@@ -62,12 +62,15 @@ publish:pypi:
   id_tokens:
     PYPI_ID_TOKEN:
       aud: pypi
+  environment:
+    name: 'release'
+    url: 'https://pypi.org/project/uvrev'
   script:
     # If your tooling expects CI_JOB_JWT_V2, map the token (safe no-op if unused).
     - export CI_JOB_JWT_V2="$PYPI_ID_TOKEN"
 
     # Build distributions
-    - uv build --no-sources
+    - uv build
 
     # Publish using Trusted Publishing (OIDC). No API token needed if PyPI Trusted Publisher is configured.
     - uv publish --trusted-publishing=always
