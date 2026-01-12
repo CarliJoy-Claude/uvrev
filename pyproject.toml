@@ -1,6 +1,6 @@
 [project]
 name = "uvrev"
-version = "0.1.0"
+dynamic = ["version"]
 description = "uv env manager to enable conda-style revision tracking"
 readme = "README.md"
 license = "MIT"
@@ -37,8 +37,8 @@ classifiers = [
 uvrev = "uvrev:cli.cli"
 
 [build-system]
-requires = ["uv_build>=0.9.24,<0.10.0"]
-build-backend = "uv_build"
+requires = ["hatchling>=1.28.0,<2", "hatch-vcs>=0.5.0,<0.6"]
+build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
@@ -122,7 +122,5 @@ known-first-party = ["src"]
     "PLR2004", # magic values
 ]
 
-[tool.uv.workspace]
-members = [
-    "tests/data/sample",
-]
+[tool.hatch.version]
+source = "vcs"
