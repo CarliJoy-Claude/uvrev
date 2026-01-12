@@ -8,7 +8,7 @@ stages:
 # - Set UV_LINK_MODE=copy for GitLab’s mount behavior
 variables:
   UV_VERSION: "0.9.23"
-  BASE_LAYER: "bookworm-slim"
+  BASE_LAYER: "trixie"
   UV_LINK_MODE: "copy"
   UV_CACHE_DIR: ".uv-cache"
 
