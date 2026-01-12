@@ -3,7 +3,7 @@ import tomlkit
 from .types import UVRevProject
 
 
-def read_pyproject(project: UVRevProject) -> dict:
+def read_pyproject(project: UVRevProject) -> tomlkit.TOMLDocument:
     """Read pyproject.toml using tomlkit.
 
     Args:
@@ -12,12 +12,10 @@ def read_pyproject(project: UVRevProject) -> dict:
     Returns:
         Dictionary containing pyproject.toml content.
     """
-    if not project.pyproject_path.exists():
-        return {}
     return tomlkit.loads(project.pyproject_path.read_text())
 
 
-def write_pyproject(project: UVRevProject, data: dict) -> None:
+def write_pyproject(project: UVRevProject, data: tomlkit.TOMLDocument) -> None:
     """Write pyproject.toml using tomlkit to preserve comments.
 
     Args:

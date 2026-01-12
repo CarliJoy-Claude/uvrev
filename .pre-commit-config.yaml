@@ -25,15 +25,32 @@ repos:
         language: system
         pass_filenames: false
 
-      - id: pytest-tests
-        name: pytest (tests)
-        entry: uv run pytest tests
+      # Run doctests under coverage (no reports yet; just collect data)
+      - id: pytest-doctest
+        name: pytest (doctest src)
+        entry: uv run coverage run --parallel-mode --source=src -m pytest --doctest-modules src
         language: system
         pass_filenames: false
 
-      - id: pytest-doctest
-        name: pytest (doctest src)
-        entry: uv run pytest --doctest-modules src
+      # Run tests under coverage (no reports yet; just collect data)
+      - id: pytest-tests
+        name: pytest (tests)
+        entry: uv run coverage run --parallel-mode --source=src -m pytest tests
         language: system
         pass_filenames: false
+
+      # Combine + always output coverage + always generate HTML + enforce minimum
+      # Runs alone AFTER all other hooks (pre-commit will not run it concurrently).
+      - id: coverage-report
+        name: coverage (combine, html, report, fail-under)
+        entry: >
+          bash -c
+          'uv run coverage combine &&
+           uv run coverage html --fail-under=0 &&
+           uv run coverage xml --fail-under=0 &&
+           uv run coverage report --show-missing'
+        language: system
+        verbose: true
+        pass_filenames: false
+        require_serial: true
 

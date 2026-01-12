@@ -72,6 +72,9 @@ def parse_uv_lock_packages(toml_content: str) -> dict[NormalizedName, Version]:
         ... [[package]]
         ... name = "NumPy"
         ... version = "1.24.3"
+        ...
+        ... [[package]]
+        ... name = "ignored"
         ... '''
         >>> pkgs = parse_uv_lock_packages(content)
         >>> 'pandas' in pkgs
@@ -82,7 +85,8 @@ def parse_uv_lock_packages(toml_content: str) -> dict[NormalizedName, Version]:
         '2.0.0'
         >>> str(pkgs['numpy'])
         '1.24.3'
-
+        >>> "ignore" not in pkgs
+        True
         >>> # Empty content
         >>> parse_uv_lock_packages('')
         {}

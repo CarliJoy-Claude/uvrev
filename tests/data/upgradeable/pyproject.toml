@@ -1,0 +1,11 @@
+[project]
+name = "uvrev-venv-base"
+version = "1"
+requires-python = ">=3.12"
+dependencies = [
+    "sampleproject",
+]
+
+[tool.uv]
+package = false
+

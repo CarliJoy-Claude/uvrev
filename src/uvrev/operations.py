@@ -1,15 +1,16 @@
 import contextlib
 from pathlib import Path
 
-from packaging.utils import NormalizedName, canonicalize_name
+from packaging.utils import NormalizedName
 from packaging.version import Version
 
+from . import constants
 from .commands import git, uv
 from .differ import create_changelog
 from .exceptions import RevisionNotFoundError
 from .io import read_pyproject, write_pyproject
 from .parser import parse_pyproject_deps, parse_uv_lock_packages
-from .types import NormalizedRequirement, Revision, SubprocessFailure, UVRevProject
+from .types import Revision, SubprocessFailure, UVRevProject
 
 
 def create_env(base_dir: Path, name: str, python: str) -> UVRevProject:
@@ -30,7 +31,7 @@ def create_env(base_dir: Path, name: str, python: str) -> UVRevProject:
     if target.exists():
         raise FileExistsError(f"Folder for project '{name}' ({target}) already exists.")
     project = UVRevProject(target)
-    target.mkdir()
+    target.mkdir(parents=True)
     # Create project using uv
     uv(
         "init",
@@ -39,12 +40,13 @@ def create_env(base_dir: Path, name: str, python: str) -> UVRevProject:
         "--no-package",
         "--no-readme",
         "--no-description",
+        "--no-workspace",
         "--name",
-        name,
+        f"uvrev-venv-{name}",
         ".",
         project=project,
     )
-
+    target.joinpath("main.py").unlink(missing_ok=True)
     # Configure pyproject.toml
     data = read_pyproject(project)
     data.setdefault("tool", {}).setdefault("uv", {})["package"] = False
@@ -54,7 +56,7 @@ def create_env(base_dir: Path, name: str, python: str) -> UVRevProject:
 
     # Create initial revision
     git("add", ".", project=project)
-    git("commit", "-m", "(rev 0) Initial project creation", project=project)
+    git("commit", "-m", constants.INITIAL_COMMIT_MSG, project=project)
     git("tag", "rev_0", project=project)
 
     return project
@@ -139,11 +141,6 @@ def create_revision(
     # Get next revision number (which is also the version)
     rev_num = get_next_revision_number(project)
 
-    # Update version in pyproject.toml
-    data = read_pyproject(project)
-    data.setdefault("project", {})["version"] = str(rev_num)
-    write_pyproject(project, data)
-
     # Commit changes
     git("add", "pyproject.toml", "uv.lock", project=project)
 
@@ -224,7 +221,7 @@ RemoveCount = int
 
 def remove_packages(
     project: UVRevProject, packages: tuple[str, ...]
-) -> tuple[Revision | None, RemoveCount]:
+) -> Revision | None:
     """Remove packages from project.
 
     Args:
@@ -234,32 +231,12 @@ def remove_packages(
     Returns:
         Tuple of (new_revision_number, number_of_packages_removed).
     """
-    # Canonicalize package names for comparison
-    pkgs_to_delete = {canonicalize_name(pkg) for pkg in packages}
-
-    # Read pyproject.toml
-    data = read_pyproject(project)
-    dependencies = data.get("project", {}).get("dependencies", [])
-
-    # Parse and filter dependencies
-    original_count = len(dependencies)
-    parsed_deps = [NormalizedRequirement(dep) for dep in dependencies]
-    filtered_deps = [str(dep) for dep in parsed_deps if dep.name not in pkgs_to_delete]
-
-    # Update dependencies
-    data.setdefault("project", {})["dependencies"] = filtered_deps
-    removed_count = original_count - len(filtered_deps)
-
-    if removed_count:
-        # Write back
-        write_pyproject(project, data)
-
-    # Run uv sync
-    uv("sync", project=project)
+    # Use uv to remove packages
+    uv("remove", *packages, project=project)
 
     # Create revision
     rev_num = create_revision(project, f"Removed: {', '.join(packages)}")
-    return rev_num, removed_count
+    return rev_num
 
 
 def show_history(project: UVRevProject) -> str:

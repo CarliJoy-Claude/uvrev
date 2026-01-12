@@ -25,10 +25,15 @@ class TestUVRevProject:
 
         assert not project.exists()
 
-    # Both exist
-    def test_exists(self, tmp_project: UVRevProject) -> None:
+    # Both exist and not a package
+    def test_exists(self, tmp_path: Path) -> None:
         """Both directory and pyproject.toml exist."""
-        assert tmp_project.exists()
+        project_dir = tmp_path / "testproject"
+        project_dir.mkdir()
+        (project_dir / "pyproject.toml").write_text("[tool.uv]\npackage = false\n")
+        proj = UVRevProject(project_dir)
+
+        assert proj.exists() is True
 
     # Properties return correct paths
     def test_properties(self, tmp_path: Path) -> None:

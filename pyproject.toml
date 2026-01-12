@@ -3,6 +3,7 @@ name = "uvrev"
 version = "0.1.0"
 description = "uv env manager to enable conda-style revision tracking"
 readme = "README.md"
+license = "MIT"
 authors = [
     { name = "Carli* Freudenberg", email = "kound@posteo.de" }
 ]
@@ -12,6 +13,25 @@ dependencies = [
     "platformdirs>=4",
     "tomlkit>=0.13",
 ]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Programming Language :: Python",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
 
 [project.scripts]
 uvrev = "uvrev:cli.cli"
@@ -26,18 +46,28 @@ dev = [
     "mypy>=1.19.1",
     "pre-commit>=4.5.1",
     "pytest>=9.0.2",
+    "pytest-dependency>=0.6.0",
     "ruff>=0.14.11",
 ]
 
 [tool.coverage.run]
 branch = true
-source = ["src"]
+source = ["src", "tests"]
 parallel = true
 
 [tool.coverage.report]
 show_missing = true
-skip_covered = true
+skip_covered = false
 fail_under = 100
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+    "assert_never\\(.*\\)",
+]
+
 
 [tool.coverage.html]
 directory = "htmlcov"
@@ -90,4 +120,9 @@ known-first-party = ["src"]
 "tests/**" = [
     "S101", # assert usage
     "PLR2004", # magic values
+]
+
+[tool.uv.workspace]
+members = [
+    "tests/data/sample",
 ]

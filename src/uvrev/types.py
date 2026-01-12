@@ -1,5 +1,6 @@
 import shlex
 import subprocess
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NewType
@@ -35,7 +36,10 @@ class UVRevProject:
         ...     p.exists()
         False
         """
-        return self.project_path.exists() and self.pyproject_path.exists()
+        if not self.project_path.exists() or not self.pyproject_path.exists():
+            return False
+        data = tomllib.loads(self.pyproject_path.read_text())
+        return data.get("tool", {}).get("uv", {}).get("package") is False
 
 
 class NormalizedRequirement(Requirement):
@@ -54,6 +58,6 @@ class SubprocessFailure(click.ClickException):
     """
 
     def __init__(self, error: subprocess.CalledProcessError) -> None:
-        if isinstance(error.cmd, tuple):
+        if isinstance(error.cmd, tuple):  # pragma: no branch
             error.cmd = shlex.join(error.cmd)
         super().__init__(str(error))

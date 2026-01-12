@@ -19,7 +19,7 @@ from .operations import (
     show_history,
     upgrade_packages,
 )
-from .terminal import success, warning
+from .terminal import fatal_error, success, warning
 from .types import Revision, UVRevProject
 
 
@@ -45,7 +45,9 @@ def env_option_callback(
         if proj.exists():
             return proj
         else:
-            warning("Currently activated VIRTUAL_ENV is not a uvrev env. Ignoring.")
+            warning(
+                f"Currently activated VIRTUAL_ENV ({venv}) is not a uvrev env. Ignoring."
+            )
 
     name = value or constants.DEFAULT_ENV
     proj = UVRevProject(get_base_dir() / name)
@@ -64,7 +66,7 @@ def env_option(f):
     return click.option(
         "--env",
         "-e",
-        "env",
+        "project",
         default=None,
         show_default=constants.DEFAULT_ENV,
         callback=env_option_callback,
@@ -90,7 +92,12 @@ def env() -> None:
 
 @env.command("create")
 @click.argument("name", required=False)
-@click.option("--python", default="3.12", show_default=True, help="Python version")
+@click.option(
+    "--python",
+    default=constants.DEFAULT_PYTHON,
+    show_default=True,
+    help="Python version",
+)
 def env_create(name: str | None, python: str) -> None:
     """Create a new UV project with revision tracking"""
     project_name = name or constants.DEFAULT_ENV
@@ -99,7 +106,7 @@ def env_create(name: str | None, python: str) -> None:
         project = create_env(get_base_dir(), project_name, python)
         success(f"Project '{project_name}' created at {project.project_path}")
     except FileExistsError as e:
-        raise click.ClickException(str(e)) from e
+        fatal_error(str(e))
 
 
 @env.command("list")
@@ -119,9 +126,9 @@ def env_list() -> None:
 @cli.command()
 @click.argument("packages", nargs=-1, required=True)
 @env_option
-def add(env: UVRevProject, packages: tuple[str, ...]) -> None:
+def add(project: UVRevProject, packages: tuple[str, ...]) -> None:
     """Add packages to the current project"""
-    rev_num = add_packages(env, packages)
+    rev_num = add_packages(project, packages)
     if rev_num:
         success(f"Created revision {rev_num}")
 
@@ -129,34 +136,31 @@ def add(env: UVRevProject, packages: tuple[str, ...]) -> None:
 @cli.command()
 @click.argument("packages", nargs=-1, required=True)
 @env_option
-def remove(env: UVRevProject, packages: tuple[str, ...]) -> None:
+def remove(project: UVRevProject, packages: tuple[str, ...]) -> None:
     """Remove packages from the current project"""
-    rev_num, removed_count = remove_packages(env, packages)
-    if removed_count:
-        success(f"Removed {removed_count} package(s), created revision {rev_num}")
-    else:
-        warning("No package(s) were removed")
+    rev_num = remove_packages(project, packages)
+    success(f"Removed {' '.join(packages)}.  Created revision {rev_num}.")
 
 
 @cli.command()
 @env_option
-def sync(env: UVRevProject) -> None:
+def sync(project: UVRevProject) -> None:
     """Sync project dependencies"""
-    uv("sync", "--frozen", project=env)
+    uv("sync", "--frozen", project=project)
     success("Sync complete.")
 
 
 @cli.command()
 @click.argument("packages", nargs=-1)
 @env_option
-def upgrade(env: UVRevProject, packages: tuple[str, ...]) -> None:
+def upgrade(project: UVRevProject, packages: tuple[str, ...]) -> None:
     """Upgrade packages or all dependencies if no packages specified
 
     Examples:
         uvrev upgrade           # Upgrade all packages
         uvrev upgrade pandas    # Upgrade only pandas
     """
-    rev_num = upgrade_packages(env, packages)
+    rev_num = upgrade_packages(project, packages)
     if packages:
         success(f"Upgraded {len(packages)} package(s), created revision {rev_num}")
     else:
@@ -165,55 +169,49 @@ def upgrade(env: UVRevProject, packages: tuple[str, ...]) -> None:
 
 @cli.command("list")
 @env_option
-def list_packages(env: UVRevProject) -> None:
+def list_packages(project: UVRevProject) -> None:
     """List installed packages in the current environment"""
-    all_packages = list_installed_packages(env)
-
-    if not all_packages:
-        click.echo("No packages installed")
-        return
+    all_packages = list_installed_packages(project)
 
     click.echo("Installed packages:")
     for pkg, version, in_pyproject_toml in all_packages:
-        click.secho(f"  {pkg}=={version}", bold=in_pyproject_toml)
+        click.secho(
+            f"  • {pkg}=={version} {'[dep]' if in_pyproject_toml else ''}",
+            bold=in_pyproject_toml,
+        )
 
 
 @cli.command()
 @env_option
-def history(env: UVRevProject) -> None:
+def history(project: UVRevProject) -> None:
     """Show revision history for the current project"""
-    output = show_history(env)
-
-    if not output.strip():
-        click.echo("No history found")
-        return
-
+    output = show_history(project)
     click.echo(output)
 
 
 @cli.command()
 @click.argument("revision", type=int)
 @env_option
-def restore(env: UVRevProject, revision: Revision) -> None:
+def restore(project: UVRevProject, revision: Revision) -> None:
     """Restore project to a specific revision"""
     try:
-        restore_revision(env, revision)
+        restore_revision(project, revision)
         success(f"Restored to revision {revision}")
     except RevisionNotFoundError as e:
-        raise click.ClickException(str(e)) from None
+        fatal_error(str(e))
 
 
 @cli.command()
 @env_option
-def path(env: UVRevProject) -> None:
+def path(project: UVRevProject) -> None:
     """Show the path to the current project"""
-    click.echo(env.project_path)
+    click.echo(project.project_path)
 
 
 @cli.command(context_settings={"ignore_unknown_options": True})
 @click.argument("run_args", nargs=-1, type=click.UNPROCESSED, required=True)
 @env_option
-def run(env: UVRevProject, run_args: tuple[str, ...]) -> None:
+def run(project: UVRevProject, run_args: tuple[str, ...]) -> None:
     """Run commands in the project using uv run with locked dependencies
 
     Examples:
@@ -221,8 +219,4 @@ def run(env: UVRevProject, run_args: tuple[str, ...]) -> None:
         uvrev run pytest
         uvrev run -- myapp --help
     """
-    uv("run", "--locked", *run_args, project=env)
-
-
-if __name__ == "__main__":
-    cli()
+    uv("run", "--locked", *run_args, project=project)

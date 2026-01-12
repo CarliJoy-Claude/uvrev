@@ -1,3 +1,6 @@
+import sys
+from typing import NoReturn
+
 import click
 
 
@@ -11,3 +14,8 @@ def warning(msg: str) -> None:
 
 def error(msg: str) -> None:
     click.secho(f"❌ {msg}", fg="red", err=True)
+
+
+def fatal_error(msg: str, exit_code: int = 1) -> NoReturn:
+    error(msg)
+    sys.exit(exit_code)

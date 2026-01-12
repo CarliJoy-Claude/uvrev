@@ -94,6 +94,6 @@ def uv(*args: str, project: UVRevProject) -> None:
         # disable VIRTUAL_ENV warning
         del env["VIRTUAL_ENV"]
     try:
-        subprocess.run(cmd, cwd=project.project_path, check=False, env=env)
+        subprocess.run(cmd, cwd=project.project_path, check=True, env=env)
     except subprocess.CalledProcessError as e:
         raise SubprocessFailure(e) from e

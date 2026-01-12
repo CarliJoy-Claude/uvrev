@@ -1,0 +1,35 @@
+version = 1
+revision = 3
+requires-python = ">=3.12"
+
+[[package]]
+name = "peppercorn"
+version = "0.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/77/93085de7108cdf1a0b092ff443872a8f9442c736d7ddebdf2f27627935f4/peppercorn-0.6.tar.gz", hash = "sha256:96d7681d7a04545cfbaf2c6fb66de67b29cfc42421aa263e4c78f2cbb85be4c6", size =16386, upload-time = "2018-08-24T06:27:14.096Z" }
+wheels = [
+{ url = "https://files.pythonhosted.org/packages/14/84/d8d9c3f17bda2b6f49406982546d6f6bc0fa188a43d4e3ba9169a457ee04/peppercorn-0.6-py3-none-any.whl", hash = "sha256:46125cad688a9cf3b08e463bcb797891ee73ece93602a8ea6f14e40d1042d454", size = 4796, upload-time = "2018-08-24T06:27:12.077Z" },
+]
+
+[[package]]
+name = "uvrev-venv-sample"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+{ name = "sampleproject" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "sampleproject", specifier = ">=4.0.0" }]
+
+[[package]]
+name = "sampleproject"
+version = "4.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+{ name = "peppercorn" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/48/8c/c18d25735962870ccb6d1cd2ac7bde40008a332211055e260cb7ec4c6bab/sampleproject-4.0.0.tar.gz", hash = "sha256:0ace7980f82c5815ede4cd7bf9f6693684cec2ae47b9b7ade9add533b8627c6b", size = 5760, upload-time = "2024-11-06T22:37:10.868Z" }
+wheels = [
+{ url = "https://files.pythonhosted.org/packages/d7/73/c16e5f3f0d37c60947e70865c255a58dc408780a6474de0523afd0ec553a/sampleproject-4.0.0-py3-none-any.whl", hash = "sha256:c23e447ea90d796d1e645c35c4b2de125040add12a845825546f91c93f391b6b", size = 4661, upload-time = "2024-11-06T22:37:09.22Z" },
+]
