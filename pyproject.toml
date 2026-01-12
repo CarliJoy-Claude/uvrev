@@ -4,6 +4,7 @@ dynamic = ["version"]
 description = "uv env manager to enable conda-style revision tracking"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Carli* Freudenberg", email = "kound@posteo.de" }
 ]
@@ -31,6 +32,13 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://gitlab.com/Kound/uvrev"
+Documentation = "https://gitlab.com/Kound/uvrev/-/blob/main/README.md"
+Changelog = "https://gitlab.com/Kound/uvrev/-/tags"
+Issues = "https://gitlab.com/Kound/uvrev/-/issues"
+"Source Code" = "https://gitlab.com/Kound/uvrev"
 
 
 [project.scripts]
