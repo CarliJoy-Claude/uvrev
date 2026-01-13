@@ -4,7 +4,7 @@ stages:
 
 # Template: https://docs.astral.sh/uv/guides/integration/gitlab/#using-the-uv-image
 # Key points:
-# - Use ghcr.io/astral-sh/uv:<UV_VERSION>-python<PYTHON_VERSION>-<BASE_LAYER>
+# - Use ghcr.io/astral-sh/uv:<UV_VERSION>-python<UV_PYTHON>-<BASE_LAYER>
 # - Set UV_LINK_MODE=copy for GitLab’s mount behavior
 variables:
   UV_VERSION: "0.9.23"
@@ -16,12 +16,12 @@ variables:
   UV_PYTHON_PREFERENCE: "system"
 
 default:
-  image: "ghcr.io/astral-sh/uv:${UV_VERSION}-python${PYTHON_VERSION}-${BASE_LAYER}"
+  image: "ghcr.io/astral-sh/uv:${UV_VERSION}-python${UV_PYTHON}-${BASE_LAYER}"
   cache:
     - key:
         files:
           - uv.lock
-        prefix: "uv-${PYTHON_VERSION}"
+        prefix: "uv-${UV_PYTHON}"
       paths:
         - $UV_CACHE_DIR
 
@@ -32,7 +32,7 @@ test:
   stage: test
   parallel:
     matrix:
-      - PYTHON_VERSION: ["3.12", "3.13", "3.14"]
+      - UV_PYTHON: ["3.12", "3.13", "3.14"]
   script:
     - uv run pre-commit run --all-files
 
@@ -56,7 +56,7 @@ publish:pypi:
   stage: publish
   # Build/publish once (pick a stable version for publishing)
   variables:
-    PYTHON_VERSION: "3.12"
+    UV_PYTHON: "3.12"
   rules:
     # Typical choice: publish only for tags
     - if: $CI_COMMIT_TAG
