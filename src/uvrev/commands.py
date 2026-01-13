@@ -1,3 +1,4 @@
+import os
 import shlex
 import subprocess
 from functools import cache
@@ -5,7 +6,6 @@ from pathlib import Path
 from typing import Literal, overload
 
 import click
-import os
 
 from uvrev.types import SubprocessFailure, UVRevProject
 
