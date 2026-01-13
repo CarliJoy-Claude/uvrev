@@ -11,6 +11,9 @@ variables:
   BASE_LAYER: "trixie"
   UV_LINK_MODE: "copy"
   UV_CACHE_DIR: "${CI_PROJECT_DIR}/.uv-cache"
+  UV_FROZEN: "true"
+  UV_PYTHON_DOWNLOADS: "false"
+  UV_PYTHON_PREFERENCE: "system"
 
 default:
   image: "ghcr.io/astral-sh/uv:${UV_VERSION}-python${PYTHON_VERSION}-${BASE_LAYER}"
