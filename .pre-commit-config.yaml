@@ -26,9 +26,9 @@ repos:
         pass_filenames: false
 
       # Test cli (ensure imports are correct)
-      - id: pytest-doctest
-        name: pytest (doctest src)
-        entry: uv run --no-extra --no-dev uvrev --help
+      - id: test-cli
+        name: Test cli with help
+        entry: uv run --no-dev uvrev --help
         language: system
         pass_filenames: false
 
