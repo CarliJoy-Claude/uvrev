@@ -148,7 +148,7 @@ def create_revision(
     git("commit", "-m", commit_msg, project=project)
 
     # Create lightweight tag
-    git("tag", f"rev_{rev_num}", project=project)
+    git("tag", f"rev_{rev_num}",  "-m", commit_msg, project=project)
 
     return Revision(rev_num)
 
