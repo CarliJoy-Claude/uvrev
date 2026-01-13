@@ -18,6 +18,7 @@ def fix_env(monkeypatch: pytest.MonkeyPatch) -> None:
     Fix environemnt to deliver the same test results everywhere
     """
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.delenv("UV_FROZEN", raising=False)
     monkeypatch.setenv("UV_LINK_MODE", "copy")
 
 
