@@ -25,6 +25,13 @@ repos:
         language: system
         pass_filenames: false
 
+      # Test cli (ensure imports are correct)
+      - id: pytest-doctest
+        name: pytest (doctest src)
+        entry: uv run --no-extra --no-dev uvrev --help
+        language: system
+        pass_filenames: false
+
       # Run doctests under coverage (no reports yet; just collect data)
       - id: pytest-doctest
         name: pytest (doctest src)
