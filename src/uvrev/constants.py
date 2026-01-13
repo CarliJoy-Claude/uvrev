@@ -1,5 +1,5 @@
-from typing import Final
 import os
+from typing import Final
 
 DEFAULT_PYTHON: Final[str] = os.environ.get("UV_PYTHON", "3.12")
 DEFAULT_ENV: Final[str] = "base"
