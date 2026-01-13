@@ -34,7 +34,7 @@ test:
     matrix:
       - PYTHON_VERSION: ["3.12", "3.13", "3.14"]
   script:
-    - uv run --locked pre-commit run --all-files
+    - uv run pre-commit run --all-files
 
   after_script:
     # Recommended by Astral to keep cache size under control in CI
