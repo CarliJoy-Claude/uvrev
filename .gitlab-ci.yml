@@ -35,6 +35,8 @@ test:
       - UV_PYTHON: ["3.12", "3.13", "3.14", "3.15"]
   script:
     - uv run prek run --all-files
+  # Total coverage shown in merge requests, pipelines and the coverage badge
+  coverage: '/^\s*TOTAL\s.*\s(\d+(?:\.\d+)?)%$/'
 
   after_script:
     # Recommended by Astral to keep cache size under control in CI
