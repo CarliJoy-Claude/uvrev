@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Support for Python 3.15.
 - `py.typed` marker, so type checkers use the type hints of uvrev ([PEP 561](https://peps.python.org/pep-0561/)).
 - Coverage is shown in GitLab merge requests and as badge, together with other badges in the README.
+- Test results are reported to GitLab as JUnit reports, so failing tests are listed in merge requests.
 
 ### Changed
 
