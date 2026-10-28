@@ -2,6 +2,7 @@ import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import click
 from platformdirs import user_data_path
@@ -22,7 +23,7 @@ from .operations import (
     sync_packages,
     upgrade_packages,
 )
-from .report import RevisionChange, build_error_report, build_report, dump_report
+from .report import Report, RevisionChange
 from .terminal import fatal_error, success, warning
 from .types import Revision, UVRevProject
 
@@ -64,7 +65,7 @@ def env_option_callback(
     return proj
 
 
-def env_option(f):
+def env_option[F: Callable[..., Any]](f: F) -> F:
     """Reusable option decorator for environment selection with project lookup"""
 
     return click.option(
@@ -78,7 +79,7 @@ def env_option(f):
     )(f)
 
 
-def json_option(f):
+def json_option[F: Callable[..., Any]](f: F) -> F:
     """Reusable option decorator to print a JSON report of the changes"""
 
     return click.option(
@@ -113,11 +114,9 @@ def run_operation(
             revision: Revision | None = get_last_revision_number(project)
         except click.ClickException:
             revision = None
-        click.echo(
-            dump_report(build_error_report(command, arguments, revision, message))
-        )
+        click.echo(Report.from_error(command, arguments, revision, message).to_json())
         fatal_error(message)
-    click.echo(dump_report(build_report(command, arguments, change)))
+    click.echo(Report.from_change(command, arguments, change).to_json())
     return change
 
 

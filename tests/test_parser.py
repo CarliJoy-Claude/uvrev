@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from textwrap import dedent
 
 import pytest
@@ -70,7 +71,9 @@ class TestParsePyprojectDeps:
             ("   \n\n  ", {}),
         ],
     )
-    def test_empty_or_missing(self, content: str, expected: dict) -> None:
+    def test_empty_or_missing(
+        self, content: str, expected: Mapping[str, object]
+    ) -> None:
         """Handle missing or empty dependencies."""
         assert parse_pyproject_deps(content) == expected
 
@@ -140,7 +143,9 @@ class TestParseUvLockPackages:
             ("   \n\n  ", {}),
         ],
     )
-    def test_empty_or_missing(self, content: str, expected: dict) -> None:
+    def test_empty_or_missing(
+        self, content: str, expected: Mapping[str, object]
+    ) -> None:
         """Handle missing or empty packages."""
         assert parse_uv_lock_packages(content) == expected
 

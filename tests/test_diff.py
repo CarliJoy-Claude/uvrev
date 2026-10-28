@@ -5,7 +5,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import NormalizedName
 from packaging.version import Version
 
-from uvrev.differ import Diff, create_changelog
+from uvrev.differ import Changes, Diff, VersionChange, create_changelog
 
 
 class TestDiffLines:
@@ -205,16 +205,16 @@ class TestDiff:
 
         diff = Diff(old, new)  # type: ignore[arg-type]
 
-        assert diff.changes() == {
-            "added": ["scipy"],
-            "updated": ["pandas"],
-            "removed": ["numpy"],
-        }
+        assert diff.changes() == Changes(
+            added=(NormalizedName("scipy"),),
+            updated=(NormalizedName("pandas"),),
+            removed=(NormalizedName("numpy"),),
+        )
         assert diff.all_changed == ("numpy", "pandas", "scipy")
         assert diff.versions() == {
-            "numpy": {"old": "1.0", "new": None},
-            "pandas": {"old": "1.0", "new": "2.0"},
-            "scipy": {"old": None, "new": "1.5"},
+            "numpy": VersionChange(old="1.0", new=None),
+            "pandas": VersionChange(old="1.0", new="2.0"),
+            "scipy": VersionChange(old=None, new="1.5"),
         }
 
     def test_downgrade_is_update(self) -> None:
@@ -227,14 +227,23 @@ class TestDiff:
         diff = Diff({"numpy": SpecifierSet(">=1")}, {"numpy": None, "pandas": None})  # type: ignore[dict-item]
 
         assert diff.versions() == {
-            "numpy": {"old": ">=1", "new": ""},
-            "pandas": {"old": None, "new": ""},
+            "numpy": VersionChange(old=">=1", new=""),
+            "pandas": VersionChange(old=None, new=""),
         }
 
     def test_empty(self) -> None:
         diff: Diff[Version] = Diff()
 
         assert not diff
-        assert diff.changes() == {"added": [], "updated": [], "removed": []}
+        assert diff.changes() == Changes(added=(), updated=(), removed=())
         assert diff.all_changed == ()
         assert diff.versions() == {}
+
+    def test_immutable(self) -> None:
+        """Changing the given states does not change the diff"""
+        old = {NormalizedName("pandas"): Version("1.0")}
+        diff = Diff(old, {})
+
+        old[NormalizedName("numpy")] = Version("1.0")
+
+        assert diff.removed == ("pandas",)

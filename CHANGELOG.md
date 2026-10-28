@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   so stdout only contains the actual result (`uvrev run` still writes to stdout).
 - `uvrev upgrade` tells if everything is already up to date instead of reporting `created revision None`.
 - Development and CI use [prek](https://github.com/j178/prek) instead of pre-commit.
+- mypy runs in strict mode, and diffs, revision changes and reports are immutable.
 - CI uses uv 0.13.6 and tests Python 3.12 to 3.15.
 
 ### Removed

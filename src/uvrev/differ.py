@@ -1,21 +1,28 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TypedDict
+from types import MappingProxyType
 
 from packaging.specifiers import SpecifierSet
 from packaging.utils import NormalizedName
 from packaging.version import Version
 
-DiffValue = Version | SpecifierSet | None | str
+type DiffValue = Version | SpecifierSet | None | str
+type Names = tuple[NormalizedName, ...]
 
 
-class ChangesDict(TypedDict):
-    added: list[NormalizedName]
-    updated: list[NormalizedName]
-    removed: list[NormalizedName]
+@dataclass(frozen=True)
+class Changes:
+    """Changed names grouped by kind of change"""
+
+    added: Names
+    updated: Names
+    removed: Names
 
 
-class VersionChangeDict(TypedDict):
+@dataclass(frozen=True)
+class VersionChange:
+    """Old and new value of a changed name (None if absent)"""
+
     old: str | None
     new: str | None
 
@@ -70,21 +77,33 @@ class Diff[T: DiffValue]:
         True
         >>> bool(Diff(old, old))
         False
+
+        The states are copied, so the diff can not be changed afterwards:
+
+        >>> diff.old["numpy"] = ">=1"
+        Traceback (most recent call last):
+        ...
+        TypeError: 'mappingproxy' object does not support item assignment
     """
 
     old: Mapping[NormalizedName, T] = field(default_factory=dict)
     new: Mapping[NormalizedName, T] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        # frozen dataclass: bypass __setattr__ to store read-only copies
+        object.__setattr__(self, "old", MappingProxyType(dict(self.old)))
+        object.__setattr__(self, "new", MappingProxyType(dict(self.new)))
+
     @property
-    def added(self) -> tuple[NormalizedName, ...]:
+    def added(self) -> Names:
         return tuple(sorted(pkg for pkg in self.new if pkg not in self.old))
 
     @property
-    def removed(self) -> tuple[NormalizedName, ...]:
+    def removed(self) -> Names:
         return tuple(sorted(pkg for pkg in self.old if pkg not in self.new))
 
     @property
-    def updated(self) -> tuple[NormalizedName, ...]:
+    def updated(self) -> Names:
         return tuple(
             sorted(
                 pkg
@@ -94,7 +113,7 @@ class Diff[T: DiffValue]:
         )
 
     @property
-    def all_changed(self) -> tuple[NormalizedName, ...]:
+    def all_changed(self) -> Names:
         return tuple(sorted((*self.added, *self.updated, *self.removed)))
 
     def __bool__(self) -> bool:
@@ -123,29 +142,29 @@ class Diff[T: DiffValue]:
         ]
         return tuple(sorted(changes))
 
-    def changes(self) -> ChangesDict:
+    def changes(self) -> Changes:
         """Changed names grouped by kind of change.
 
         >>> Diff({'a': '1'}, {'b': '1'}).changes()
-        {'added': ['b'], 'updated': [], 'removed': ['a']}
+        Changes(added=('b',), updated=(), removed=('a',))
         """
-        return {
-            "added": list(self.added),
-            "updated": list(self.updated),
-            "removed": list(self.removed),
-        }
+        return Changes(added=self.added, updated=self.updated, removed=self.removed)
 
-    def versions(self) -> dict[NormalizedName, VersionChangeDict]:
+    def versions(self) -> Mapping[NormalizedName, VersionChange]:
         """Old and new value of every changed name (None if absent).
 
-        >>> Diff({'a': Version('1.0')}, {'a': Version('2.0'), 'b': None}).versions()
-        {'a': {'old': '1.0', 'new': '2.0'}, 'b': {'old': None, 'new': ''}}
+        >>> for pkg, change in Diff(
+        ...     {'a': Version('1.0')}, {'a': Version('2.0'), 'b': None}
+        ... ).versions().items():
+        ...     print(pkg, change)
+        a VersionChange(old='1.0', new='2.0')
+        b VersionChange(old=None, new='')
         """
         return {
-            pkg: {
-                "old": value2str(self.old[pkg]) if pkg in self.old else None,
-                "new": value2str(self.new[pkg]) if pkg in self.new else None,
-            }
+            pkg: VersionChange(
+                old=value2str(self.old[pkg]) if pkg in self.old else None,
+                new=value2str(self.new[pkg]) if pkg in self.new else None,
+            )
             for pkg in self.all_changed
         }
 

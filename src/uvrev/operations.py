@@ -1,4 +1,5 @@
 import contextlib
+from collections.abc import Mapping
 from importlib.metadata import distributions
 from pathlib import Path
 
@@ -238,7 +239,7 @@ def remove_packages(project: UVRevProject, packages: tuple[str, ...]) -> Revisio
     return create_revision(project, f"Removed: {', '.join(packages)}")
 
 
-def list_venv_packages(project: UVRevProject) -> dict[NormalizedName, Version]:
+def list_venv_packages(project: UVRevProject) -> Mapping[NormalizedName, Version]:
     """Get the packages actually installed in the virtual environment.
 
     Args:
@@ -249,10 +250,10 @@ def list_venv_packages(project: UVRevProject) -> dict[NormalizedName, Version]:
         Empty if the virtual environment does not exist (yet).
     """
     venv = project.project_path / ".venv"
-    site_packages = [
+    site_packages = (
         *venv.glob("lib*/python*/site-packages"),
         *venv.glob("Lib/site-packages"),
-    ]
+    )
     return {
         canonicalize_name(dist.metadata["Name"]): Version(dist.version)
         for dist in distributions(path=[str(path) for path in site_packages])
