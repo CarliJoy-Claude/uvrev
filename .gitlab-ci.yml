@@ -7,7 +7,7 @@ stages:
 # - Use ghcr.io/astral-sh/uv:<UV_VERSION>-python<UV_PYTHON>-<BASE_LAYER>
 # - Set UV_LINK_MODE=copy for GitLab’s mount behavior
 variables:
-  UV_VERSION: "0.9.23"
+  UV_VERSION: "0.13.6"
   BASE_LAYER: "trixie"
   UV_LINK_MODE: "copy"
   UV_CACHE_DIR: "${CI_PROJECT_DIR}/.uv-cache"
@@ -26,15 +26,15 @@ default:
         - $UV_CACHE_DIR
 
 # -------------------------
-# Tests (matrix 3.12..3.14)
+# Tests (matrix 3.12..3.15)
 # -------------------------
 test:
   stage: test
   parallel:
     matrix:
-      - UV_PYTHON: ["3.12", "3.13", "3.14"]
+      - UV_PYTHON: ["3.12", "3.13", "3.14", "3.15"]
   script:
-    - uv run pre-commit run --all-files
+    - uv run prek run --all-files
 
   after_script:
     # Recommended by Astral to keep cache size under control in CI
