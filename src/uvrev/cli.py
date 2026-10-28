@@ -1,5 +1,6 @@
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import click
@@ -12,13 +13,16 @@ from .commands import uv
 from .operations import (
     add_packages,
     create_env,
+    get_last_revision_number,
     list_installed_packages,
     list_projects,
     remove_packages,
     restore_revision,
     show_history,
+    sync_packages,
     upgrade_packages,
 )
+from .report import RevisionChange, build_error_report, build_report, dump_report
 from .terminal import fatal_error, success, warning
 from .types import Revision, UVRevProject
 
@@ -74,6 +78,49 @@ def env_option(f):
     )(f)
 
 
+def json_option(f):
+    """Reusable option decorator to print a JSON report of the changes"""
+
+    return click.option(
+        "--json",
+        "as_json",
+        is_flag=True,
+        default=False,
+        help="Print a JSON report of the changes to stdout, logs go to stderr",
+    )(f)
+
+
+def run_operation(
+    project: UVRevProject,
+    arguments: tuple[str, ...],
+    as_json: bool,
+    operation: Callable[[], RevisionChange],
+) -> RevisionChange:
+    """Run an operation and print its JSON report if requested.
+
+    On failure the JSON report is still printed (with status "error") and the
+    program exits with exit code 1.
+    """
+    if not as_json:
+        return operation()
+
+    command = click.get_current_context().info_name or ""
+    try:
+        change = operation()
+    except (click.ClickException, RevisionNotFoundError) as e:
+        message = e.format_message() if isinstance(e, click.ClickException) else str(e)
+        try:
+            revision: Revision | None = get_last_revision_number(project)
+        except click.ClickException:
+            revision = None
+        click.echo(
+            dump_report(build_error_report(command, arguments, revision, message))
+        )
+        fatal_error(message)
+    click.echo(dump_report(build_report(command, arguments, change)))
+    return change
+
+
 @click.group()
 @click.version_option()
 def cli() -> None:
@@ -126,45 +173,62 @@ def env_list() -> None:
 @cli.command()
 @click.argument("packages", nargs=-1, required=True)
 @env_option
-def add(project: UVRevProject, packages: tuple[str, ...]) -> None:
+@json_option
+def add(project: UVRevProject, packages: tuple[str, ...], as_json: bool) -> None:
     """Add packages to the current project"""
-    rev_num = add_packages(project, packages)
-    if rev_num:
-        success(f"Created revision {rev_num}")
+    change = run_operation(
+        project, packages, as_json, lambda: add_packages(project, packages)
+    )
+    if change.created:
+        success(f"Created revision {change.revision}")
 
 
 @cli.command()
 @click.argument("packages", nargs=-1, required=True)
 @env_option
-def remove(project: UVRevProject, packages: tuple[str, ...]) -> None:
+@json_option
+def remove(project: UVRevProject, packages: tuple[str, ...], as_json: bool) -> None:
     """Remove packages from the current project"""
-    rev_num = remove_packages(project, packages)
-    success(f"Removed {' '.join(packages)}.  Created revision {rev_num}.")
+    change = run_operation(
+        project, packages, as_json, lambda: remove_packages(project, packages)
+    )
+    success(f"Removed {' '.join(packages)}.  Created revision {change.revision}.")
 
 
 @cli.command()
 @env_option
-def sync(project: UVRevProject) -> None:
-    """Sync project dependencies"""
-    uv("sync", "--frozen", project=project)
+@json_option
+def sync(project: UVRevProject, as_json: bool) -> None:
+    """Sync project dependencies
+
+    With --json the changes of the installed packages are reported.
+    """
+    run_operation(project, (), as_json, lambda: sync_packages(project))
     success("Sync complete.")
 
 
 @cli.command()
 @click.argument("packages", nargs=-1)
 @env_option
-def upgrade(project: UVRevProject, packages: tuple[str, ...]) -> None:
+@json_option
+def upgrade(project: UVRevProject, packages: tuple[str, ...], as_json: bool) -> None:
     """Upgrade packages or all dependencies if no packages specified
 
     Examples:
         uvrev upgrade           # Upgrade all packages
         uvrev upgrade pandas    # Upgrade only pandas
     """
-    rev_num = upgrade_packages(project, packages)
-    if packages:
-        success(f"Upgraded {len(packages)} package(s), created revision {rev_num}")
+    change = run_operation(
+        project, packages, as_json, lambda: upgrade_packages(project, packages)
+    )
+    if not change.created:
+        success("Everything is already up to date.")
+    elif packages:
+        success(
+            f"Upgraded {len(packages)} package(s), created revision {change.revision}"
+        )
     else:
-        success(f"Upgraded all packages, created revision {rev_num}")
+        success(f"Upgraded all packages, created revision {change.revision}")
 
 
 @cli.command("list")
@@ -192,10 +256,16 @@ def history(project: UVRevProject) -> None:
 @cli.command()
 @click.argument("revision", type=int)
 @env_option
-def restore(project: UVRevProject, revision: Revision) -> None:
+@json_option
+def restore(project: UVRevProject, revision: Revision, as_json: bool) -> None:
     """Restore project to a specific revision"""
     try:
-        restore_revision(project, revision)
+        run_operation(
+            project,
+            (str(revision),),
+            as_json,
+            lambda: restore_revision(project, revision),
+        )
         success(f"Restored to revision {revision}")
     except RevisionNotFoundError as e:
         fatal_error(str(e))
@@ -219,4 +289,4 @@ def run(project: UVRevProject, run_args: tuple[str, ...]) -> None:
         uvrev run pytest
         uvrev run -- myapp --help
     """
-    uv("run", "--locked", *run_args, project=project)
+    uv("run", "--locked", *run_args, project=project, keep_stdout=True)

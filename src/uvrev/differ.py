@@ -1,19 +1,34 @@
 from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import TypedDict
 
 from packaging.specifiers import SpecifierSet
 from packaging.utils import NormalizedName
 from packaging.version import Version
 
+DiffValue = Version | SpecifierSet | None | str
 
-def version2str(ver: Version | SpecifierSet | str | None) -> str:
+
+class ChangesDict(TypedDict):
+    added: list[NormalizedName]
+    updated: list[NormalizedName]
+    removed: list[NormalizedName]
+
+
+class VersionChangeDict(TypedDict):
+    old: str | None
+    new: str | None
+
+
+def version2str(ver: DiffValue) -> str:
     """
-    Convert a version to a string
+    Convert a version to a string usable in a requirement
 
-    >> version2str(None)
+    >>> version2str(None)
     ''
-    >>version2str(SpecifierSet(">=1.2"))
+    >>> version2str(SpecifierSet(">=1.2"))
     '>=1.2'
-    >> version2str(Version("1.2"))
+    >>> version2str(Version("1.2"))
     '==1.2'
     """
     if ver is None:
@@ -23,92 +38,138 @@ def version2str(ver: Version | SpecifierSet | str | None) -> str:
     return str(ver)
 
 
-def compute_diff(
-    old_items: Mapping[NormalizedName, Version | SpecifierSet | None | str],
-    new_items: Mapping[NormalizedName, Version | SpecifierSet | None | str],
-) -> tuple[str, ...]:
-    """Compute diff between two package states.
+def value2str(ver: DiffValue) -> str:
+    """
+    Convert a version or specifier to a plain string (used for JSON)
 
-    Args:
-        old_items: Previous package state (name -> version string).
-        new_items: New package state (name -> version string).
+    >>> value2str(None)
+    ''
+    >>> value2str(SpecifierSet(">=1.2"))
+    '>=1.2'
+    >>> value2str(Version("1.2"))
+    '1.2'
+    """
+    if ver is None:
+        return ""
+    return str(ver)
 
-    Returns:
-        Sorted list of change strings (additions, removals, updates).
+
+@dataclass(frozen=True)
+class Diff[T: DiffValue]:
+    """Difference between two package states (name -> version or specifier).
 
     Examples:
         >>> old = {'pandas': '>=1.0', 'numpy': ''}
         >>> new = {'pandas': '>=2.0', 'scipy': '>=1.5'}
-        >>> diff = compute_diff(old, new)
-        >>> diff[0]  # Added scipy
-        '    +scipy>=1.5'
-        >>> diff[1]  # Removed numpy
-        '    -numpy'
-        >>> diff[2]  # Updated pandas
-        '    ^pandas>=1.0 → pandas>=2.0'
-
-        >>> # No changes case
-        >>> old = {'pandas': '>=1.0'}
-        >>> new = {'pandas': '>=1.0'}
-        >>> compute_diff(old, new)
-        ()
-
-        >>> # Only additions
-        >>> old = {}
-        >>> new = {'pandas': '>=2.0', 'numpy': ''}
-        >>> diff = compute_diff(old, new)
-        >>> len(diff)
-        2
-        >>> diff[0]
-        '    +numpy'
-        >>> diff[1]
-        '    +pandas>=2.0'
+        >>> diff = Diff(old, new)
+        >>> diff.added, diff.updated, diff.removed
+        (('scipy',), ('pandas',), ('numpy',))
+        >>> diff.all_changed
+        ('numpy', 'pandas', 'scipy')
+        >>> bool(diff)
+        True
+        >>> bool(Diff(old, old))
+        False
     """
-    changes = []
 
-    # Removed
-    for pkg, ver in old_items.items():
-        if pkg not in new_items:
-            changes.append(f"    -{pkg}{version2str(ver)}")
+    old: Mapping[NormalizedName, T] = field(default_factory=dict)
+    new: Mapping[NormalizedName, T] = field(default_factory=dict)
 
-    # Added
-    for pkg, ver in new_items.items():
-        if pkg not in old_items:
-            changes.append(f"    +{pkg}{version2str(ver)}")
+    @property
+    def added(self) -> tuple[NormalizedName, ...]:
+        return tuple(sorted(pkg for pkg in self.new if pkg not in self.old))
 
-    # Updated
-    for pkg, ver in new_items.items():
-        if pkg in old_items and old_items[pkg] != ver:
-            changes.append(
-                f"    ^{pkg}{version2str(old_items[pkg])} → {pkg}{version2str(ver)}"
+    @property
+    def removed(self) -> tuple[NormalizedName, ...]:
+        return tuple(sorted(pkg for pkg in self.old if pkg not in self.new))
+
+    @property
+    def updated(self) -> tuple[NormalizedName, ...]:
+        return tuple(
+            sorted(
+                pkg
+                for pkg, ver in self.new.items()
+                if pkg in self.old and self.old[pkg] != ver
             )
+        )
 
-    return tuple(sorted(changes))
+    @property
+    def all_changed(self) -> tuple[NormalizedName, ...]:
+        return tuple(sorted((*self.added, *self.updated, *self.removed)))
+
+    def __bool__(self) -> bool:
+        return bool(self.all_changed)
+
+    def lines(self) -> tuple[str, ...]:
+        """Human readable change lines, sorted.
+
+        Examples:
+            >>> old = {'pandas': '>=1.0', 'numpy': ''}
+            >>> new = {'pandas': '>=2.0', 'scipy': '>=1.5'}
+            >>> for line in Diff(old, new).lines():
+            ...     print(line)
+                +scipy>=1.5
+                -numpy
+                ^pandas>=1.0 → pandas>=2.0
+
+            >>> Diff({'pandas': '>=1.0'}, {'pandas': '>=1.0'}).lines()
+            ()
+        """
+        changes = [f"    -{pkg}{version2str(self.old[pkg])}" for pkg in self.removed]
+        changes += [f"    +{pkg}{version2str(self.new[pkg])}" for pkg in self.added]
+        changes += [
+            f"    ^{pkg}{version2str(self.old[pkg])} → {pkg}{version2str(self.new[pkg])}"
+            for pkg in self.updated
+        ]
+        return tuple(sorted(changes))
+
+    def changes(self) -> ChangesDict:
+        """Changed names grouped by kind of change.
+
+        >>> Diff({'a': '1'}, {'b': '1'}).changes()
+        {'added': ['b'], 'updated': [], 'removed': ['a']}
+        """
+        return {
+            "added": list(self.added),
+            "updated": list(self.updated),
+            "removed": list(self.removed),
+        }
+
+    def versions(self) -> dict[NormalizedName, VersionChangeDict]:
+        """Old and new value of every changed name (None if absent).
+
+        >>> Diff({'a': Version('1.0')}, {'a': Version('2.0'), 'b': None}).versions()
+        {'a': {'old': '1.0', 'new': '2.0'}, 'b': {'old': None, 'new': ''}}
+        """
+        return {
+            pkg: {
+                "old": value2str(self.old[pkg]) if pkg in self.old else None,
+                "new": value2str(self.new[pkg]) if pkg in self.new else None,
+            }
+            for pkg in self.all_changed
+        }
 
 
 def create_changelog(
-    old_deps: Mapping[NormalizedName, SpecifierSet | None],
-    new_deps: Mapping[NormalizedName, SpecifierSet | None],
-    old_packages: Mapping[NormalizedName, Version],
-    new_packages: Mapping[NormalizedName, Version],
+    dependencies: Diff[SpecifierSet | None],
+    packages: Diff[Version],
 ) -> str:
     """Create a formatted changelog from dependency and lockfile diffs.
 
     Args:
-        old_deps: Previous dependency constraints.
-        new_deps: New dependency constraints.
-        old_packages: Previous pinned package versions.
-        new_packages: New pinned package versions.
+        dependencies: Diff of the dependency constraints (pyproject.toml).
+        packages: Diff of the pinned package versions (uv.lock).
 
     Returns:
         Formatted changelog string with Dependencies and Pinned Versions sections.
 
     Examples:
-        >>> old_d = {'pandas': None}
-        >>> new_d = {'pandas': None, 'numpy': None}
-        >>> old_p = {'pandas': Version('1.0.0')}
-        >>> new_p = {'pandas': Version('2.0.0'), 'numpy': Version('1.24.0')}
-        >>> print(create_changelog(old_d, new_d, old_p, new_p))
+        >>> deps = Diff({'pandas': None}, {'pandas': None, 'numpy': None})
+        >>> pkgs = Diff(
+        ...     {'pandas': Version('1.0.0')},
+        ...     {'pandas': Version('2.0.0'), 'numpy': Version('1.24.0')},
+        ... )
+        >>> print(create_changelog(deps, pkgs))
         <BLANKLINE>
           Dependencies:
             +numpy
@@ -118,21 +179,14 @@ def create_changelog(
         <BLANKLINE>
 
         >>> # No changes case
-        >>> old_d = {'pandas': None}
-        >>> new_d = {'pandas': None}
-        >>> old_p = {'pandas': Version('1.0.0')}
-        >>> new_p = {'pandas': Version('1.0.0')}
-        >>> print(create_changelog(old_d, new_d, old_p, new_p))
+        >>> print(create_changelog(Diff(), Diff()))
         (no changes)
     """
-    # Convert to string representation for diff
-    deps_diff = compute_diff(old_deps, new_deps)
-    lock_diff = compute_diff(old_packages, new_packages)
     result = ""
-    if deps_diff:
+    if deps_diff := dependencies.lines():
         result = "\n  Dependencies:\n"
         result += "\n".join(deps_diff)
-    if lock_diff:
+    if lock_diff := packages.lines():
         result += "\n  Pinned Versions:\n"
         result += "\n".join(lock_diff) + "\n"
     if result:
