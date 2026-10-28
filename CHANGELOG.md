@@ -17,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   See the [README](README.md#json-output) for the full format.
 - `uvrev sync --json` reports the changes of the packages installed in the virtual environment.
 - Support for Python 3.15.
+- `py.typed` marker, so type checkers use the type hints of uvrev ([PEP 561](https://peps.python.org/pep-0561/)).
+- Coverage is shown in GitLab merge requests and as badge, together with other badges in the README.
 
 ### Changed
 

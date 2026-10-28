@@ -1,5 +1,16 @@
 # uvrev
 
+[![pipeline](https://gitlab.com/Kound/uvrev/badges/main/pipeline.svg)](https://gitlab.com/Kound/uvrev/-/pipelines?ref=main)
+[![coverage](https://gitlab.com/Kound/uvrev/badges/main/coverage.svg)](https://gitlab.com/Kound/uvrev/-/pipelines?ref=main)
+[![PyPI](https://img.shields.io/pypi/v/uvrev)](https://pypi.org/project/uvrev/)
+[![Python versions](https://img.shields.io/pypi/pyversions/uvrev)](https://pypi.org/project/uvrev/)
+[![License](https://img.shields.io/pypi/l/uvrev)](https://gitlab.com/Kound/uvrev/-/blob/main/LICENSE)
+[![Typed](https://img.shields.io/badge/typing-typed-blue)](https://peps.python.org/pep-0561/)
+[![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![prek](https://raw.githubusercontent.com/j178/prek/master/docs/assets/badge.svg)](https://github.com/j178/prek)
+
 **uvrev** is a CLI tool that wraps the **uv** package manager and adds **git-based, conda-style revision tracking** for Python environments.
 
 It allows you to manage UV projects as isolated environments with a full, inspectable revision history. Every package change (add, remove, update) creates a new Git commit and tag, making it easy to understand what changed and to roll back to any previous state.
