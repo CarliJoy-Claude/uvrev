@@ -152,7 +152,7 @@ def create_revision(
     commit_msg = f"(rev {rev_num}) {message}\n{changelog}"
     git("commit", "-m", commit_msg, project=project)
 
-    # Create lightweight tag
+    # Create annotated tag (can be signed)
     git("tag", "-m", commit_msg, "--annotate", f"rev_{rev_num}", project=project)
 
     return RevisionChange(last_rev, rev_num, packages, deps)
