@@ -1,4 +1,5 @@
 import tomllib
+from collections.abc import Mapping
 
 from packaging.specifiers import SpecifierSet
 from packaging.utils import NormalizedName, canonicalize_name
@@ -9,7 +10,7 @@ from .types import NormalizedRequirement
 
 def parse_pyproject_deps(
     toml_content: str,
-) -> dict[NormalizedName, SpecifierSet | None]:
+) -> Mapping[NormalizedName, SpecifierSet | None]:
     """Parse dependencies from pyproject.toml content.
 
     Args:
@@ -45,16 +46,14 @@ def parse_pyproject_deps(
         return {}
 
     data = tomllib.loads(toml_content)
-    deps = {}
-
-    for dep_str in data.get("project", {}).get("dependencies", []):
-        req = NormalizedRequirement(dep_str)
-        deps[req.name] = req.specifier if req.specifier else None
-
-    return deps
+    requirements = (
+        NormalizedRequirement(dep_str)
+        for dep_str in data.get("project", {}).get("dependencies", ())
+    )
+    return {req.name: req.specifier or None for req in requirements}
 
 
-def parse_uv_lock_packages(toml_content: str) -> dict[NormalizedName, Version]:
+def parse_uv_lock_packages(toml_content: str) -> Mapping[NormalizedName, Version]:
     """Parse packages from uv.lock content.
 
     Args:
@@ -95,11 +94,8 @@ def parse_uv_lock_packages(toml_content: str) -> dict[NormalizedName, Version]:
         return {}
 
     data = tomllib.loads(toml_content)
-    packages = {}
-
-    for pkg in data.get("package", []):
-        if "name" in pkg and "version" in pkg:
-            canonical_name = canonicalize_name(pkg["name"])
-            packages[canonical_name] = Version(pkg["version"])
-
-    return packages
+    return {
+        canonicalize_name(pkg["name"]): Version(pkg["version"])
+        for pkg in data.get("package", ())
+        if "name" in pkg and "version" in pkg
+    }

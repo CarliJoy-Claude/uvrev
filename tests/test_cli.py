@@ -1,3 +1,4 @@
+import json
 import shutil
 from pathlib import Path
 from typing import Any, Protocol
@@ -94,6 +95,32 @@ def upgradeable_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
     return proj
 
 
+@pytest.fixture
+def sample_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
+    """Create a project with a lock file that is not yet installed"""
+    proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
+    operations.create_env(fake_basedir, constants.DEFAULT_ENV, constants.DEFAULT_PYTHON)
+    shutil.copytree(data_dir / "sample", proj.project_path, dirs_exist_ok=True)
+    operations.create_revision(proj, "Add sampleproject")
+    return proj
+
+
+def parse_report(result: Result) -> dict[str, Any]:
+    """Parse the JSON report, ensuring nothing else was written to stdout"""
+    report: dict[str, Any] = json.loads(result.stdout)
+    assert report["schema_version"] == 1
+    # the flat list is the union of all detailed changes
+    for changes, all_changed in (
+        ("changes", "all_changed_packages"),
+        ("dependency_changes", "all_changed_dependencies"),
+    ):
+        assert sorted(sum(report[changes].values(), [])) == report[all_changed]
+    return report
+
+
+NO_CHANGES: dict[str, list[str]] = {"added": [], "updated": [], "removed": []}
+
+
 class TestCLIDefinition:
     """Tests for CLI commands."""
 
@@ -130,6 +157,9 @@ class TestCLIDefinition:
             ["--help"],
             ["add", "--help"],
             ["remove", "--help"],
+            ["sync", "--help"],
+            ["upgrade", "--help"],
+            ["restore", "--help"],
             ["env", "--help"],
             ["env", "create", "--help"],
         ],
@@ -283,9 +313,8 @@ class TestPath:
 
 
 class TestSync:
-    def test_sample(self, fake_basedir: Path, data_dir: Path, invoke: Invoker) -> None:
-        target = fake_basedir / constants.DEFAULT_ENV
-        shutil.copytree(data_dir / "sample", target)
+    def test_sample(self, sample_project: UVRevProject, invoke: Invoker) -> None:
+        target = sample_project.project_path
 
         # find simple file for all python versions on all platforms
         sample_exists = any(
@@ -306,6 +335,53 @@ class TestSync:
             for sp in target.joinpath(".venv", lib).glob("python*/site-packages")
         )
         assert sample_exists is True
+
+    def test_json(self, sample_project: UVRevProject, invoke: Invoker) -> None:
+        """The changes of the installed packages are reported"""
+        result = invoke("sync", "--json")
+
+        assert result.exit_code == 0
+        # logs are still shown, but on stderr
+        assert "uv sync --frozen" in result.stderr
+        report = parse_report(result)
+        assert report["status"] == "success"
+        assert report["command"] == "sync"
+        assert report["arguments"] == []
+        assert report["revision"] == report["previous_revision"] == 1
+        assert report["changes"] == {
+            "added": ["peppercorn", "sampleproject"],
+            "updated": [],
+            "removed": [],
+        }
+        assert report["all_changed_packages"] == ["peppercorn", "sampleproject"]
+        assert report["versions"]["packages"] == {
+            "peppercorn": {"old": None, "new": "0.6"},
+            "sampleproject": {"old": None, "new": "4.0.0"},
+        }
+        assert report["dependency_changes"] == NO_CHANGES
+        assert report["error_message"] is None
+
+        # Syncing again does not change anything
+        result = invoke("sync", "--json")
+
+        assert result.exit_code == 0
+        report = parse_report(result)
+        assert report["revision"] == 1
+        assert report["changes"] == NO_CHANGES
+        assert report["all_changed_packages"] == []
+
+    def test_json_error(self, fake_basedir: Path, invoke: Invoker) -> None:
+        """A failure is reported as JSON, even if no revision can be determined"""
+        create_fake_env(fake_basedir / constants.DEFAULT_ENV)
+
+        result = invoke("sync", "--json")
+
+        assert result.exit_code == 1
+        report = parse_report(result)
+        assert report["status"] == "error"
+        assert report["revision"] is None
+        assert "uv sync --frozen" in report["error_message"]
+        assert report["all_changed_packages"] == []
 
 
 class TestUpgrade:
@@ -423,6 +499,34 @@ class TestUpgrade:
         assert f"^{sample_pkg}==3.0.0 →" not in history
         assert f"^{sample_dep}==0.5 →" in history
 
+    def test_upgrade_json(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        result = invoke("upgrade", "--json")
+
+        assert result.exit_code == 0
+        report = parse_report(result)
+        assert report["command"] == "upgrade"
+        assert report["previous_revision"] == 1
+        assert report["revision"] == 2
+        assert report["changes"] == {
+            "added": [],
+            "updated": ["peppercorn", "sampleproject"],
+            "removed": [],
+        }
+        assert report["versions"]["packages"]["sampleproject"]["old"] == "3.0.0"
+        # the constraints in pyproject.toml are untouched
+        assert report["dependency_changes"] == NO_CHANGES
+
+        # Nothing left to upgrade
+        result = invoke("upgrade", "--json")
+
+        assert result.exit_code == 0
+        assert "already up to date" in result.stderr
+        report = parse_report(result)
+        assert report["revision"] == report["previous_revision"] == 2
+        assert report["all_changed_packages"] == []
+
 
 class TestCliIntegration:
     """
@@ -442,9 +546,16 @@ class TestCliIntegration:
     @pytest.mark.dependency(name="1-add", depends=["1-add"])
     def test_add_again(self, invoke: Invoker, shared_project: UVRevProject) -> None:
         """adding again does not change the revision"""
-        result = invoke("add", "cowsay", "sampleproject")
+        result = invoke("add", "cowsay", "sampleproject", "--json")
         assert result.exit_code == 0
         assert "Created revision" not in result.output
+
+        report = parse_report(result)
+        assert report["command"] == "add"
+        assert report["arguments"] == ["cowsay", "sampleproject"]
+        assert report["revision"] == report["previous_revision"] == 1
+        assert report["all_changed_packages"] == []
+        assert report["all_changed_dependencies"] == []
 
         installed = parse_uv_lock_packages(shared_project.lock_path.read_text())
         assert "cowsay" in installed
@@ -478,6 +589,20 @@ class TestCliIntegration:
         # removed
         assert "sampleproject" not in installed
 
+    @pytest.mark.dependency(name="2-remove-fail", depends=["2-remove"])
+    def test_remove_failing(
+        self, invoke: Invoker, shared_project: UVRevProject
+    ) -> None:
+        result = invoke("remove", "not-installed", "--json")
+        assert result.exit_code == 1
+
+        report = parse_report(result)
+        assert report["status"] == "error"
+        assert report["command"] == "remove"
+        assert report["revision"] == report["previous_revision"] == 2
+        assert "uv remove not-installed" in report["error_message"]
+        assert report["changes"] == NO_CHANGES
+
     @pytest.mark.dependency(name="3-restore", depends=["2-remove"])
     def test_restore(self, invoke: Invoker, shared_project: UVRevProject) -> None:
         result = invoke("restore", "1")
@@ -497,11 +622,47 @@ class TestCliIntegration:
         assert result.exit_code == 1
         assert "Revision 10 does not exist" in result.output
 
+    @pytest.mark.dependency(name="3-restore-fail", depends=["3-restore"])
+    def test_restore_failing_json(
+        self, invoke: Invoker, shared_project: UVRevProject
+    ) -> None:
+        result = invoke("restore", "10", "--json")
+        assert result.exit_code == 1
+
+        report = parse_report(result)
+        assert report["status"] == "error"
+        assert report["arguments"] == ["10"]
+        assert report["revision"] == 3
+        assert report["error_message"] == "Revision 10 does not exist"
+
     @pytest.mark.dependency(name="4-history", depends=["3-restore"])
     def test_history(self, invoke: Invoker, shared_project: UVRevProject) -> None:
         result = invoke("history")
         assert result.exit_code == 0
         print(result.output)
+
+    @pytest.mark.dependency(name="5-add-transitive", depends=["3-restore"])
+    def test_add_transitive_json(
+        self, invoke: Invoker, shared_project: UVRevProject
+    ) -> None:
+        """
+        Adding an already locked transitive package only changes the dependencies
+        """
+        result = invoke("add", "peppercorn", "--json")
+        assert result.exit_code == 0
+
+        report = parse_report(result)
+        assert report["previous_revision"] == 3
+        assert report["revision"] == 4
+        assert report["dependency_changes"] == {
+            "added": ["peppercorn"],
+            "updated": [],
+            "removed": [],
+        }
+        assert report["versions"]["dependencies"] == {
+            "peppercorn": {"old": None, "new": ""}
+        }
+        assert report["all_changed_packages"] == []
 
 
 class TestCommon:

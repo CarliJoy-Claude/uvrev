@@ -35,14 +35,14 @@ repos:
       # Run doctests under coverage (no reports yet; just collect data)
       - id: pytest-doctest
         name: pytest (doctest src)
-        entry: uv run coverage run --parallel-mode --source=src -m pytest --doctest-modules src
+        entry: uv run coverage run --parallel-mode --source=src -m pytest --doctest-modules src --junitxml=junit-doctest.xml -o junit_suite_name=doctest
         language: system
         pass_filenames: false
 
       # Run tests under coverage (no reports yet; just collect data)
       - id: pytest-tests
         name: pytest (tests)
-        entry: uv run coverage run --parallel-mode --source=src -m pytest tests
+        entry: uv run coverage run --parallel-mode --source=src -m pytest tests --junitxml=junit-tests.xml -o junit_suite_name=tests
         language: system
         pass_filenames: false
 

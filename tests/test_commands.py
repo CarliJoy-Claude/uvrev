@@ -10,7 +10,7 @@ from uvrev.types import SubprocessFailure, UVRevProject
 
 
 class Command(Protocol):
-    def __call__(self, *args: str, project: UVRevProject): ...
+    def __call__(self, *args: str, project: UVRevProject) -> None: ...
 
 
 class TestFailing:
@@ -30,7 +30,6 @@ class TestUV:
         When running uv, remove the VIRTUAL_ENV parameter as it potentiell confusing uv
         """
         run_mock: mock.MagicMock = mock.create_autospec(subprocess.run)
-        monkeypatch.setattr(commands.subprocess, "run", run_mock)
         monkeypatch.setattr(subprocess, "run", run_mock)
         monkeypatch.setenv("VIRTUAL_ENV", "/home/user/.venv")
         monkeypatch.setenv("KEEP_ME", "IN")
