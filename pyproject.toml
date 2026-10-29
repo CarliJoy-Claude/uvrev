@@ -14,6 +14,7 @@ dependencies = [
     "packaging>=25.0",
     "platformdirs>=4",
     "tomlkit>=0.13",
+    "typed-settings>=26",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

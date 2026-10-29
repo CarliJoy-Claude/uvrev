@@ -12,17 +12,22 @@ from .differ import Diff, create_changelog
 from .exceptions import RevisionNotFoundError
 from .io import read_pyproject, write_pyproject
 from .parser import parse_pyproject_deps, parse_uv_lock_packages
+from .protection import writable_venv
 from .report import RevisionChange
+from .settings import Settings
 from .types import Revision, SubprocessFailure, UVRevProject
 
 
-def create_env(base_dir: Path, name: str, python: str) -> UVRevProject:
+def create_env(
+    base_dir: Path, name: str, python: str, settings: Settings | None = None
+) -> UVRevProject:
     """Create a new UV project with revision tracking.
 
     Args:
         base_dir: Base directory to create project in.
         name: Name of the project.
         python: Python version to use.
+        settings: Settings of uvrev (defaults if not given).
 
     Returns:
         Created UVRevProject instance.
@@ -33,7 +38,7 @@ def create_env(base_dir: Path, name: str, python: str) -> UVRevProject:
     target = base_dir.joinpath(name)
     if target.exists():
         raise FileExistsError(f"Folder for project '{name}' ({target}) already exists.")
-    project = UVRevProject(target)
+    project = UVRevProject(target, settings or Settings())
     target.mkdir(parents=True)
     # Create project using uv
     uv(
@@ -55,7 +60,8 @@ def create_env(base_dir: Path, name: str, python: str) -> UVRevProject:
     data.setdefault("tool", {}).setdefault("uv", {})["package"] = False
     data.setdefault("project", {})["version"] = "0"
     write_pyproject(project, data)
-    uv("sync", project=project)
+    with writable_venv(project):
+        uv("sync", project=project)
 
     # Create initial revision
     git("add", ".", project=project)
@@ -183,8 +189,8 @@ def restore_revision(project: UVRevProject, rev_num: Revision) -> RevisionChange
     # Checkout files from that revision
     git("checkout", tag_name, "--", "pyproject.toml", "uv.lock", project=project)
 
-    # Run uv sync
-    uv("sync", "--locked", project=project)
+    with writable_venv(project):
+        uv("sync", "--locked", project=project)
 
     # Create new revision for the restore
     return create_revision(project, f"Restored to revision {rev_num}")
@@ -221,7 +227,8 @@ def add_packages(project: UVRevProject, packages: tuple[str, ...]) -> RevisionCh
     Returns:
         Changes compared to the previous revision.
     """
-    uv("add", "--raw", *packages, project=project)
+    with writable_venv(project):
+        uv("add", "--raw", *packages, project=project)
     return create_revision(project, f"Added: {', '.join(packages)}")
 
 
@@ -235,7 +242,8 @@ def remove_packages(project: UVRevProject, packages: tuple[str, ...]) -> Revisio
     Returns:
         Changes compared to the previous revision.
     """
-    uv("remove", *packages, project=project)
+    with writable_venv(project):
+        uv("remove", *packages, project=project)
     return create_revision(project, f"Removed: {', '.join(packages)}")
 
 
@@ -272,7 +280,8 @@ def sync_packages(project: UVRevProject) -> RevisionChange:
         Changes of the installed packages.
     """
     installed_before = list_venv_packages(project)
-    uv("sync", "--frozen", project=project)
+    with writable_venv(project):
+        uv("sync", "--frozen", project=project)
     rev = get_last_revision_number(project)
     return RevisionChange(rev, rev, Diff(installed_before, list_venv_packages(project)))
 
@@ -309,12 +318,13 @@ def upgrade_packages(
     Returns:
         Changes compared to the previous revision.
     """
-    if packages:
-        for pkg in packages:
-            uv("sync", "--upgrade-package", pkg, project=project)
-        message = f"Upgraded: {', '.join(packages)}"
-    else:
-        uv("sync", "--upgrade", project=project)
-        message = "Upgraded all packages"
+    with writable_venv(project):
+        if packages:
+            for pkg in packages:
+                uv("sync", "--upgrade-package", pkg, project=project)
+            message = f"Upgraded: {', '.join(packages)}"
+        else:
+            uv("sync", "--upgrade", project=project)
+            message = "Upgraded all packages"
 
     return create_revision(project, message)

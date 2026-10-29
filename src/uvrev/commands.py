@@ -28,6 +28,22 @@ def show_cwd_change(project_path: Path) -> None:
     show_cmd(("cd", str(project_path)))
 
 
+def run_cmd(*cmd: str, project: UVRevProject) -> None:
+    """
+    Execute a command in project directory, its stdout goes to stderr
+
+    Args:
+        *cmd: Command and its arguments
+        project: Project to run command in
+    """
+    show_cwd_change(project.project_path)
+    show_cmd(cmd)
+    try:
+        subprocess.run(cmd, cwd=project.project_path, stdout=STDERR_FD, check=True)
+    except subprocess.CalledProcessError as e:
+        raise SubprocessFailure(e) from e
+
+
 @overload
 def git(
     *args: str,
@@ -94,6 +110,7 @@ def uv(*args: str, project: UVRevProject, keep_stdout: bool = False) -> None:
     if "VIRTUAL_ENV" in env:
         # disable VIRTUAL_ENV warning
         del env["VIRTUAL_ENV"]
+    env["UV_COMPILE_BYTECODE"] = str(project.settings.compile_bytecode).lower()
     try:
         subprocess.run(
             cmd,
