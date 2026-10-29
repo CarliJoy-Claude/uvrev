@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `uvrev add --python <version>` adds the given packages and changes the Python version in one revision.
   It runs `uv add --raw --python <version>` followed by `uv python pin <version>`.
 - `tool.uv.environments` is set in `pyproject.toml`, so packages are only resolved for the current platform
-  and the supported Python versions (`UVREV_SUPPORT_PYTHON_VERSION` or the installed ones, matching `requires-python`).
+  and the supported Python versions (setting `support_python_version` or the installed ones, matching `requires-python`).
   `add`, `remove`, `upgrade` and `upgrade-python` update it first, if needed, `sync` and `restore` don't.
   See the [README](README.md#supported-environments).
 - `Environments` section in the changelog of a revision and `environments` field in the JSON report.
@@ -24,9 +24,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `uvrev env create --force` deletes an environment folder without this file first.
   Commands warn about environments without it, `uvrev env fix` marks them as created successfully.
   See the [README](README.md#creating-environments).
+- The `.venv` of an environment is read-only (`chmod -R a-w .venv`), so it can not be changed by accident.
+  uvrev makes it writable (`chmod -R u+w .venv`) only while `uv` changes it, modes and command are configurable.
+  The environments of `uvrev tool run` are protected as well.
+  `uvrev protect` and `uvrev unprotect` change the protection manually.
+  See the [README](README.md#protected-environments).
+- `uvrev verify` checks the `.venv` against the `RECORD` files of the installed packages
+  and `uv.lock`, `uvrev verify --fix` repairs it.
+  `--verify` runs it after `add`, `remove`, `sync`, `upgrade`, `upgrade-python` and `restore`.
+- Settings file in the user config directory (e.g. `~/.config/uvrev/config.toml`, `UVREV_CONFIG_FILE` replaces it),
+  loaded with [typed-settings](https://typed-settings.readthedocs.io/).
+  `uvrev settings` shows the settings and the location of the file. See the [README](README.md#settings).
 
 ### Changed
 
+- `UVREV_SUPPORT_PYTHON_VERSION` is the setting `support_python_version`, the environment variable keeps working.
+- Bytecode is compiled on install (setting `compile_bytecode`), as a protected `.venv` can not cache it.
+- `uvrev run` syncs the environment first if needed and runs the command with the protected `.venv`.
 - `uvrev upgrade-python` runs `uv python pin` and no longer changes `requires-python`,
   so downgrades are possible as long as the version matches `requires-python`.
 - The first revision (`rev_0`) is an annotated tag like all other revisions.
