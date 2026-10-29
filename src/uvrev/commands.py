@@ -9,12 +9,16 @@ import click
 
 from uvrev.types import SubprocessFailure, UVRevProject
 
+# stdout of internal commands is redirected here, so uvrev's stdout stays parseable
+STDERR_FD = 2
+
 
 def show_cmd(cmd: tuple[str, ...]) -> None:
     """Display command being executed"""
     click.echo(
         click.style("$ ", fg="red", bold=True)
-        + click.style(shlex.join(cmd), fg="magenta")
+        + click.style(shlex.join(cmd), fg="magenta"),
+        err=True,
     )
 
 
@@ -22,6 +26,22 @@ def show_cmd(cmd: tuple[str, ...]) -> None:
 def show_cwd_change(project_path: Path) -> None:
     """Show cd command once per project"""
     show_cmd(("cd", str(project_path)))
+
+
+def run_cmd(*cmd: str, project: UVRevProject) -> None:
+    """
+    Execute a command in project directory, its stdout goes to stderr
+
+    Args:
+        *cmd: Command and its arguments
+        project: Project to run command in
+    """
+    show_cwd_change(project.project_path)
+    show_cmd(cmd)
+    try:
+        subprocess.run(cmd, cwd=project.project_path, stdout=STDERR_FD, check=True)
+    except subprocess.CalledProcessError as e:
+        raise SubprocessFailure(e) from e
 
 
 @overload
@@ -58,7 +78,7 @@ def git(
     cmd = ("git", *args)
     show_cmd(cmd)
 
-    stdout = subprocess.PIPE if capture_output else None
+    stdout = subprocess.PIPE if capture_output else STDERR_FD
     try:
         result = subprocess.run(
             cmd,
@@ -74,17 +94,14 @@ def git(
     return None
 
 
-def uv(*args: str, project: UVRevProject) -> None:
+def uv(*args: str, project: UVRevProject, keep_stdout: bool = False) -> None:
     """
     Execute uv command in project directory
 
     Args:
         *args: UV command arguments
         project: Project to run command in
-        capture_output: If True, capture and return stdout
-
-    Returns:
-        Command stdout if capture_output=True, empty string otherwise
+        keep_stdout: If True, the command writes to stdout, otherwise to stderr
     """
     show_cwd_change(project.project_path)
     cmd = ("uv", *args)
@@ -93,7 +110,14 @@ def uv(*args: str, project: UVRevProject) -> None:
     if "VIRTUAL_ENV" in env:
         # disable VIRTUAL_ENV warning
         del env["VIRTUAL_ENV"]
+    env["UV_COMPILE_BYTECODE"] = str(project.settings.compile_bytecode).lower()
     try:
-        subprocess.run(cmd, cwd=project.project_path, check=True, env=env)
+        subprocess.run(
+            cmd,
+            cwd=project.project_path,
+            check=True,
+            env=env,
+            stdout=None if keep_stdout else STDERR_FD,
+        )
     except subprocess.CalledProcessError as e:
         raise SubprocessFailure(e) from e

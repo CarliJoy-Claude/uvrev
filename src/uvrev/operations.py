@@ -1,25 +1,33 @@
 import contextlib
+from collections.abc import Mapping
+from importlib.metadata import distributions
 from pathlib import Path
 
-from packaging.utils import NormalizedName
+from packaging.utils import NormalizedName, canonicalize_name
 from packaging.version import Version
 
 from . import constants
 from .commands import git, uv
-from .differ import create_changelog
+from .differ import Diff, create_changelog
 from .exceptions import RevisionNotFoundError
 from .io import read_pyproject, write_pyproject
 from .parser import parse_pyproject_deps, parse_uv_lock_packages
+from .protection import writable_venv
+from .report import RevisionChange
+from .settings import Settings
 from .types import Revision, SubprocessFailure, UVRevProject
 
 
-def create_env(base_dir: Path, name: str, python: str) -> UVRevProject:
+def create_env(
+    base_dir: Path, name: str, python: str, settings: Settings | None = None
+) -> UVRevProject:
     """Create a new UV project with revision tracking.
 
     Args:
         base_dir: Base directory to create project in.
         name: Name of the project.
         python: Python version to use.
+        settings: Settings of uvrev (defaults if not given).
 
     Returns:
         Created UVRevProject instance.
@@ -30,7 +38,7 @@ def create_env(base_dir: Path, name: str, python: str) -> UVRevProject:
     target = base_dir.joinpath(name)
     if target.exists():
         raise FileExistsError(f"Folder for project '{name}' ({target}) already exists.")
-    project = UVRevProject(target)
+    project = UVRevProject(target, settings or Settings())
     target.mkdir(parents=True)
     # Create project using uv
     uv(
@@ -52,7 +60,8 @@ def create_env(base_dir: Path, name: str, python: str) -> UVRevProject:
     data.setdefault("tool", {}).setdefault("uv", {})["package"] = False
     data.setdefault("project", {})["version"] = "0"
     write_pyproject(project, data)
-    uv("sync", project=project)
+    with writable_venv(project):
+        uv("sync", project=project)
 
     # Create initial revision
     git("add", ".", project=project)
@@ -80,16 +89,16 @@ def list_projects(base_dir: Path) -> tuple[str, ...]:
     )
 
 
-def get_next_revision_number(project: UVRevProject) -> Revision:
-    """Get the next revision number.
+def get_last_revision_number(project: UVRevProject) -> Revision:
+    """Get the number of the latest revision.
 
-    Uses git tag -l to list all numeric tags, sorts them, and returns the highest + 1.
+    Uses git tag -l to list all numeric tags and returns the highest.
 
     Args:
         project: Project to get revision number for.
 
     Returns:
-        Next revision number (0 if no revisions exist).
+        Latest revision number (0 if no revisions exist).
     """
     output = git(
         "tag",
@@ -105,12 +114,12 @@ def get_next_revision_number(project: UVRevProject) -> Revision:
         with contextlib.suppress(ValueError):
             last_rev = max(last_rev, int(rev.removeprefix("rev_")))
 
-    return Revision(last_rev + 1)
+    return Revision(last_rev)
 
 
 def create_revision(
     project: UVRevProject, message: str = "Update packages"
-) -> Revision | None:
+) -> RevisionChange:
     """Create a new revision (commit + tag).
 
     Args:
@@ -118,8 +127,10 @@ def create_revision(
         message: Commit message.
 
     Returns:
-        New revision number or None if nothing was changed
+        Changes compared to the previous revision.
+        If nothing changed, no revision is created.
     """
+    last_rev = get_last_revision_number(project)
     # Get previous and current state
     old_pyproject = git(
         "show", "HEAD:pyproject.toml", project=project, capture_output=True
@@ -128,18 +139,19 @@ def create_revision(
     current_pyproject = project.pyproject_path.read_text()
     current_lock = project.lock_path.read_text()
     if old_pyproject == current_pyproject and old_lock == current_lock:
-        return None
+        return RevisionChange(last_rev, last_rev)
 
-    old_deps = parse_pyproject_deps(old_pyproject)
-    old_packages = parse_uv_lock_packages(old_lock)
-    new_deps = parse_pyproject_deps(current_pyproject)
-    new_packages = parse_uv_lock_packages(current_lock)
+    deps = Diff(
+        parse_pyproject_deps(old_pyproject), parse_pyproject_deps(current_pyproject)
+    )
+    packages = Diff(
+        parse_uv_lock_packages(old_lock), parse_uv_lock_packages(current_lock)
+    )
 
     # Build changelog
-    changelog = create_changelog(old_deps, new_deps, old_packages, new_packages)
+    changelog = create_changelog(deps, packages)
 
-    # Get next revision number (which is also the version)
-    rev_num = get_next_revision_number(project)
+    rev_num = Revision(last_rev + 1)
 
     # Commit changes
     git("add", "pyproject.toml", "uv.lock", project=project)
@@ -147,21 +159,24 @@ def create_revision(
     commit_msg = f"(rev {rev_num}) {message}\n{changelog}"
     git("commit", "-m", commit_msg, project=project)
 
-    # Create lightweight tag
+    # Create annotated tag (can be signed)
     git("tag", "-m", commit_msg, "--annotate", f"rev_{rev_num}", project=project)
 
-    return Revision(rev_num)
+    return RevisionChange(last_rev, rev_num, packages, deps)
 
 
-def restore_revision(project: UVRevProject, rev_num: Revision) -> None:
+def restore_revision(project: UVRevProject, rev_num: Revision) -> RevisionChange:
     """Restore to a specific revision.
 
     Args:
         project: Project to restore.
         rev_num: Revision number to restore to.
 
+    Returns:
+        Changes compared to the previous revision.
+
     Raises:
-        ValueError: If revision does not exist.
+        RevisionNotFoundError: If revision does not exist.
     """
     tag_name = f"rev_{rev_num}"
 
@@ -174,11 +189,11 @@ def restore_revision(project: UVRevProject, rev_num: Revision) -> None:
     # Checkout files from that revision
     git("checkout", tag_name, "--", "pyproject.toml", "uv.lock", project=project)
 
-    # Run uv sync
-    uv("sync", "--locked", project=project)
+    with writable_venv(project):
+        uv("sync", "--locked", project=project)
 
     # Create new revision for the restore
-    create_revision(project, f"Restored to revision {rev_num}")
+    return create_revision(project, f"Restored to revision {rev_num}")
 
 
 def list_installed_packages(
@@ -202,7 +217,7 @@ def list_installed_packages(
     )
 
 
-def add_packages(project: UVRevProject, packages: tuple[str, ...]) -> int | None:
+def add_packages(project: UVRevProject, packages: tuple[str, ...]) -> RevisionChange:
     """Add packages to project.
 
     Args:
@@ -210,18 +225,14 @@ def add_packages(project: UVRevProject, packages: tuple[str, ...]) -> int | None
         packages: Package names to add.
 
     Returns:
-        New revision number.
+        Changes compared to the previous revision.
     """
-    uv("add", "--raw", *packages, project=project)
+    with writable_venv(project):
+        uv("add", "--raw", *packages, project=project)
     return create_revision(project, f"Added: {', '.join(packages)}")
 
 
-RemoveCount = int
-
-
-def remove_packages(
-    project: UVRevProject, packages: tuple[str, ...]
-) -> Revision | None:
+def remove_packages(project: UVRevProject, packages: tuple[str, ...]) -> RevisionChange:
     """Remove packages from project.
 
     Args:
@@ -229,14 +240,45 @@ def remove_packages(
         packages: Package names to remove.
 
     Returns:
-        Tuple of (new_revision_number, number_of_packages_removed).
+        Changes compared to the previous revision.
     """
-    # Use uv to remove packages
-    uv("remove", *packages, project=project)
+    with writable_venv(project):
+        uv("remove", *packages, project=project)
+    return create_revision(project, f"Removed: {', '.join(packages)}")
 
-    # Create revision
-    rev_num = create_revision(project, f"Removed: {', '.join(packages)}")
-    return rev_num
+
+def list_venv_packages(project: UVRevProject) -> Mapping[NormalizedName, Version]:
+    """Get the packages actually installed in the virtual environment.
+
+    Args:
+        project: Project to inspect.
+
+    Returns:
+        Dictionary mapping canonical package names to their installed versions.
+        Empty if the virtual environment does not exist (yet).
+    """
+    return {
+        canonicalize_name(dist.metadata["Name"]): Version(dist.version)
+        for dist in distributions(path=[str(path) for path in project.site_packages])
+    }
+
+
+def sync_packages(project: UVRevProject) -> RevisionChange:
+    """Sync the virtual environment with the lock file.
+
+    As the lock file is not changed, no revision is created.
+
+    Args:
+        project: Project to sync.
+
+    Returns:
+        Changes of the installed packages.
+    """
+    installed_before = list_venv_packages(project)
+    with writable_venv(project):
+        uv("sync", "--frozen", project=project)
+    rev = get_last_revision_number(project)
+    return RevisionChange(rev, rev, Diff(installed_before, list_venv_packages(project)))
 
 
 def show_history(project: UVRevProject) -> str:
@@ -261,7 +303,7 @@ def show_history(project: UVRevProject) -> str:
 
 def upgrade_packages(
     project: UVRevProject, packages: tuple[str, ...]
-) -> Revision | None:
+) -> RevisionChange:
     """Upgrade packages or all if no packages specified.
 
     Args:
@@ -269,14 +311,15 @@ def upgrade_packages(
         packages: Package names to upgrade (empty for all).
 
     Returns:
-        New revision number.
+        Changes compared to the previous revision.
     """
-    if packages:
-        for pkg in packages:
-            uv("sync", "--upgrade-package", pkg, project=project)
-        message = f"Upgraded: {', '.join(packages)}"
-    else:
-        uv("sync", "--upgrade", project=project)
-        message = "Upgraded all packages"
+    with writable_venv(project):
+        if packages:
+            for pkg in packages:
+                uv("sync", "--upgrade-package", pkg, project=project)
+            message = f"Upgraded: {', '.join(packages)}"
+        else:
+            uv("sync", "--upgrade", project=project)
+            message = "Upgraded all packages"
 
     return create_revision(project, message)

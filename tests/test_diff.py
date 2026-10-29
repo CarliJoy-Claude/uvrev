@@ -1,14 +1,15 @@
 from collections.abc import Mapping
 
 import pytest
+from packaging.specifiers import SpecifierSet
 from packaging.utils import NormalizedName
 from packaging.version import Version
 
-from uvrev.differ import compute_diff, create_changelog
+from uvrev.differ import Changes, Diff, VersionChange, create_changelog
 
 
-class TestComputeDiff:
-    """Tests for compute_diff function."""
+class TestDiffLines:
+    """Tests for Diff.lines."""
 
     # Package additions
     @pytest.mark.parametrize(
@@ -30,7 +31,7 @@ class TestComputeDiff:
         expected_count: int,
     ) -> None:
         """Detect package additions."""
-        diff = compute_diff(old, new)
+        diff = Diff(old, new).lines()
         additions = [line for line in diff if line.strip().startswith("+")]
 
         assert len(additions) == expected_count
@@ -55,7 +56,7 @@ class TestComputeDiff:
         expected_count: int,
     ) -> None:
         """Detect package removals."""
-        diff = compute_diff(old, new)
+        diff = Diff(old, new).lines()
         removals = [line for line in diff if line.strip().startswith("-")]
 
         assert len(removals) == expected_count
@@ -79,7 +80,7 @@ class TestComputeDiff:
         expected_count: int,
     ) -> None:
         """Detect package updates."""
-        diff = compute_diff(old, new)
+        diff = Diff(old, new).lines()
         updates = [line for line in diff if "^" in line]
 
         assert len(updates) == expected_count
@@ -91,13 +92,13 @@ class TestComputeDiff:
         old = {NormalizedName("pandas"): ">=1.0", NormalizedName("numpy"): ""}
         new = {NormalizedName("pandas"): ">=1.0", NormalizedName("numpy"): ""}
 
-        diff = compute_diff(old, new)
+        diff = Diff(old, new).lines()
 
         assert diff == ()
 
     def test_empty_dicts(self) -> None:
         """Empty dictionaries return placeholder."""
-        diff = compute_diff({}, {})
+        diff = Diff({}, {}).lines()
 
         assert diff == ()
 
@@ -110,7 +111,7 @@ class TestComputeDiff:
             NormalizedName("pandas"): ">=2.0",
         }
 
-        diff = compute_diff(old, new)
+        diff = Diff(old, new).lines()
 
         packages = [
             line.strip()[1:].split(">=")[0].split("~=")[0].split("==")[0]
@@ -132,7 +133,7 @@ class TestCreateChangelog:
         old_pkgs = {"pandas": Version("1.0.0")}
         new_pkgs = {"pandas": Version("2.0.0"), "numpy": Version("1.24.0")}
 
-        changelog = create_changelog(old_deps, new_deps, old_pkgs, new_pkgs)  # type: ignore[arg-type]
+        changelog = create_changelog(Diff(old_deps, new_deps), Diff(old_pkgs, new_pkgs))  # type: ignore[arg-type]
 
         assert "Dependencies:" in changelog
         assert "+numpy" in changelog
@@ -149,7 +150,7 @@ class TestCreateChangelog:
         old_pkgs: dict[str, Version] = {}
         new_pkgs: dict[str, Version] = {}
 
-        changelog = create_changelog(old_deps, new_deps, old_pkgs, new_pkgs)  # type: ignore[arg-type]
+        changelog = create_changelog(Diff(old_deps, new_deps), Diff(old_pkgs, new_pkgs))  # type: ignore[arg-type]
 
         assert "Dependencies:" in changelog
         assert "+numpy" in changelog
@@ -163,7 +164,7 @@ class TestCreateChangelog:
         old_pkgs = {"pandas": Version("1.0.0")}
         new_pkgs = {"pandas": Version("2.0.0")}
 
-        changelog = create_changelog(old_deps, new_deps, old_pkgs, new_pkgs)  # type: ignore[arg-type]
+        changelog = create_changelog(Diff(old_deps, new_deps), Diff(old_pkgs, new_pkgs))  # type: ignore[arg-type]
 
         assert "Dependencies:" not in changelog
         assert "Pinned Versions:" in changelog
@@ -178,7 +179,7 @@ class TestCreateChangelog:
         old_pkgs = {"pandas": Version("1.0.0")}
         new_pkgs = {"pandas": Version("1.0.0")}
 
-        changelog = create_changelog(old_deps, new_deps, old_pkgs, new_pkgs)  # type: ignore[arg-type]
+        changelog = create_changelog(Diff(old_deps, new_deps), Diff(old_pkgs, new_pkgs))  # type: ignore[arg-type]
 
         assert changelog == "(no changes)"
 
@@ -190,6 +191,59 @@ class TestCreateChangelog:
         old_pkgs: dict[str, Version] = {}
         new_pkgs: dict[str, Version] = {}
 
-        changelog = create_changelog(old_deps, new_deps, old_pkgs, new_pkgs)  # type: ignore[arg-type]
+        changelog = create_changelog(Diff(old_deps, new_deps), Diff(old_pkgs, new_pkgs))  # type: ignore[arg-type]
 
         assert changelog == "(no changes)"
+
+
+class TestDiff:
+    """Tests for the structured Diff."""
+
+    def test_kinds(self) -> None:
+        old = {"pandas": Version("1.0"), "numpy": Version("1.0"), "six": Version("1")}
+        new = {"pandas": Version("2.0"), "scipy": Version("1.5"), "six": Version("1")}
+
+        diff = Diff(old, new)  # type: ignore[arg-type]
+
+        assert diff.changes() == Changes(
+            added=(NormalizedName("scipy"),),
+            updated=(NormalizedName("pandas"),),
+            removed=(NormalizedName("numpy"),),
+        )
+        assert diff.all_changed == ("numpy", "pandas", "scipy")
+        assert diff.versions() == {
+            "numpy": VersionChange(old="1.0", new=None),
+            "pandas": VersionChange(old="1.0", new="2.0"),
+            "scipy": VersionChange(old=None, new="1.5"),
+        }
+
+    def test_downgrade_is_update(self) -> None:
+        diff = Diff({"pandas": Version("2.0")}, {"pandas": Version("1.0")})  # type: ignore[dict-item]
+
+        assert diff.updated == ("pandas",)
+
+    def test_specifier_none_is_empty_string(self) -> None:
+        """An unconstrained dependency is "", an absent one None"""
+        diff = Diff({"numpy": SpecifierSet(">=1")}, {"numpy": None, "pandas": None})  # type: ignore[dict-item]
+
+        assert diff.versions() == {
+            "numpy": VersionChange(old=">=1", new=""),
+            "pandas": VersionChange(old=None, new=""),
+        }
+
+    def test_empty(self) -> None:
+        diff: Diff[Version] = Diff()
+
+        assert not diff
+        assert diff.changes() == Changes(added=(), updated=(), removed=())
+        assert diff.all_changed == ()
+        assert diff.versions() == {}
+
+    def test_immutable(self) -> None:
+        """Changing the given states does not change the diff"""
+        old = {NormalizedName("pandas"): Version("1.0")}
+        diff = Diff(old, {})
+
+        old[NormalizedName("numpy")] = Version("1.0")
+
+        assert diff.removed == ("pandas",)
