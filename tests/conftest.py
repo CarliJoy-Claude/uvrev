@@ -112,3 +112,10 @@ def writable_paths(venv: Path) -> tuple[Path, ...]:
     return tuple(
         path for path in paths if not path.is_symlink() and path.lstat().st_mode & 0o222
     )
+
+
+@pytest.fixture
+def synced_project(sample_project: UVRevProject) -> UVRevProject:
+    """The sample project with installed packages and a protected venv"""
+    operations.sync_packages(sample_project)
+    return sample_project

@@ -26,6 +26,18 @@ class UVRevProject:
         return self.project_path / ".venv"
 
     @property
+    def site_packages(self) -> tuple[Path, ...]:
+        """The site-packages directories of the venv (empty if not created yet)
+
+        lib64 is usually a symlink to lib, so the real paths are deduplicated.
+        """
+        found = (
+            *self.venv_path.glob("lib*/python*/site-packages"),
+            *self.venv_path.glob("Lib/site-packages"),
+        )
+        return tuple(dict.fromkeys(path.resolve() for path in found))
+
+    @property
     def pyproject_path(self) -> Path:
         return self.project_path / "pyproject.toml"
 

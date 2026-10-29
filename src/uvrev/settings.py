@@ -13,7 +13,7 @@ class Settings:
     """Settings of uvrev
 
     >>> Settings()
-    Settings(protect=True, protect_mode='a-w', unprotect_mode='u+w', compile_bytecode=True)
+    Settings(protect=True, protect_mode='a-w', unprotect_mode='u+w', compile_bytecode=True, verify_after_change=False)
     """
 
     # Make the .venv read-only, so it can only be changed by uvrev
@@ -24,6 +24,8 @@ class Settings:
     unprotect_mode: str = "u+w"
     # Compile bytecode on install, a protected .venv can not cache it later
     compile_bytecode: bool = True
+    # Run `uvrev verify --fix` after every change of an environment
+    verify_after_change: bool = False
 
 
 def default_config_file() -> Path:

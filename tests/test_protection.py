@@ -4,7 +4,6 @@ from pathlib import Path
 import pytest
 from conftest import Invoker, writable_paths
 
-from uvrev import operations
 from uvrev.commands import uv
 from uvrev.protection import ChmodNotFoundError, protect, unprotect, writable_venv
 from uvrev.settings import Settings
@@ -135,13 +134,6 @@ class TestWritableVenv:
             pass
 
         assert mode(project.venv_path / "lib" / "module.py") == 0o640
-
-
-@pytest.fixture
-def synced_project(sample_project: UVRevProject) -> UVRevProject:
-    """The sample project with installed packages and a protected venv"""
-    operations.sync_packages(sample_project)
-    return sample_project
 
 
 class TestCli:

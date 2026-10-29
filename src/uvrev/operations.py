@@ -257,14 +257,9 @@ def list_venv_packages(project: UVRevProject) -> Mapping[NormalizedName, Version
         Dictionary mapping canonical package names to their installed versions.
         Empty if the virtual environment does not exist (yet).
     """
-    venv = project.project_path / ".venv"
-    site_packages = (
-        *venv.glob("lib*/python*/site-packages"),
-        *venv.glob("Lib/site-packages"),
-    )
     return {
         canonicalize_name(dist.metadata["Name"]): Version(dist.version)
-        for dist in distributions(path=[str(path) for path in site_packages])
+        for dist in distributions(path=[str(path) for path in project.site_packages])
     }
 
 

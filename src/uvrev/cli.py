@@ -31,8 +31,9 @@ from .protection import (
 )
 from .report import Report, RevisionChange
 from .settings import Settings, load_settings
-from .terminal import fatal_error, success, warning
+from .terminal import error, fatal_error, success, warning
 from .types import Revision, SubprocessFailure, UVRevProject
+from .verify import Problem, verify
 
 
 def get_base_dir() -> Path:
@@ -112,6 +113,59 @@ def json_option[F: Callable[..., Any]](f: F) -> F:
         default=False,
         help="Print a JSON report of the changes to stdout, logs go to stderr",
     )(f)
+
+
+def verify_option[F: Callable[..., Any]](f: F) -> F:
+    """Reusable option decorator to verify and fix the venv after a change"""
+
+    return click.option(
+        "--verify/--no-verify",
+        "verify_after",
+        default=None,
+        help="Run 'uvrev verify --fix' afterwards "
+        "(default: setting verify_after_change)",
+    )(f)
+
+
+def echo_problems(problems: tuple[Problem, ...], err: bool = False) -> None:
+    for problem in problems:
+        click.secho(
+            f"{'⚠️' if problem.is_warning else '❌'} {problem}",
+            fg="yellow" if problem.is_warning else "red",
+            err=err,
+        )
+
+
+def fix_venv(project: UVRevProject, err: bool = False) -> None:
+    """Verify and fix the venv.
+
+    Raises:
+        click.ClickException: If problems remain that could not be fixed.
+    """
+    problems = verify(project, fix=True)
+    echo_problems(problems, err=err)
+    if errors := [problem for problem in problems if not problem.is_warning]:
+        raise click.ClickException(f"{len(errors)} problem(s) could not be fixed")
+
+
+def verified(
+    project: UVRevProject,
+    verify_after: bool | None,
+    operation: Callable[[], RevisionChange],
+) -> Callable[[], RevisionChange]:
+    """Extend an operation by verifying and fixing the venv afterwards (if enabled)"""
+    if verify_after is None:
+        verify_after = project.settings.verify_after_change
+    if not verify_after:
+        return operation
+
+    def operation_and_fix() -> RevisionChange:
+        change = operation()
+        # stdout may contain the JSON report
+        fix_venv(project, err=True)
+        return change
+
+    return operation_and_fix
 
 
 def run_operation(
@@ -199,17 +253,19 @@ def env_list() -> None:
 @click.argument("packages", nargs=-1, required=True)
 @env_option
 @json_option
+@verify_option
 def add(
     project: UVRevProject,
     packages: tuple[str, ...],
     as_json: bool,
+    verify_after: bool | None,
 ) -> None:
     """Add packages to the current project"""
     change = run_operation(
         project,
         packages,
         as_json,
-        lambda: add_packages(project, packages),
+        verified(project, verify_after, lambda: add_packages(project, packages)),
     )
     if change.created:
         success(f"Created revision {change.revision}")
@@ -219,17 +275,19 @@ def add(
 @click.argument("packages", nargs=-1, required=True)
 @env_option
 @json_option
+@verify_option
 def remove(
     project: UVRevProject,
     packages: tuple[str, ...],
     as_json: bool,
+    verify_after: bool | None,
 ) -> None:
     """Remove packages from the current project"""
     change = run_operation(
         project,
         packages,
         as_json,
-        lambda: remove_packages(project, packages),
+        verified(project, verify_after, lambda: remove_packages(project, packages)),
     )
     success(f"Removed {' '.join(packages)}.  Created revision {change.revision}.")
 
@@ -237,7 +295,8 @@ def remove(
 @cli.command()
 @env_option
 @json_option
-def sync(project: UVRevProject, as_json: bool) -> None:
+@verify_option
+def sync(project: UVRevProject, as_json: bool, verify_after: bool | None) -> None:
     """Sync project dependencies
 
     With --json the changes of the installed packages are reported.
@@ -246,7 +305,7 @@ def sync(project: UVRevProject, as_json: bool) -> None:
         project,
         (),
         as_json,
-        lambda: sync_packages(project),
+        verified(project, verify_after, lambda: sync_packages(project)),
     )
     success("Sync complete.")
 
@@ -255,10 +314,12 @@ def sync(project: UVRevProject, as_json: bool) -> None:
 @click.argument("packages", nargs=-1)
 @env_option
 @json_option
+@verify_option
 def upgrade(
     project: UVRevProject,
     packages: tuple[str, ...],
     as_json: bool,
+    verify_after: bool | None,
 ) -> None:
     """Upgrade packages or all dependencies if no packages specified
 
@@ -270,7 +331,7 @@ def upgrade(
         project,
         packages,
         as_json,
-        lambda: upgrade_packages(project, packages),
+        verified(project, verify_after, lambda: upgrade_packages(project, packages)),
     )
     if not change.created:
         success("Everything is already up to date.")
@@ -308,10 +369,12 @@ def history(project: UVRevProject) -> None:
 @click.argument("revision", type=int)
 @env_option
 @json_option
+@verify_option
 def restore(
     project: UVRevProject,
     revision: Revision,
     as_json: bool,
+    verify_after: bool | None,
 ) -> None:
     """Restore project to a specific revision"""
     try:
@@ -319,7 +382,9 @@ def restore(
             project,
             (str(revision),),
             as_json,
-            lambda: restore_revision(project, revision),
+            verified(
+                project, verify_after, lambda: restore_revision(project, revision)
+            ),
         )
         success(f"Restored to revision {revision}")
     except RevisionNotFoundError as e:
@@ -376,6 +441,28 @@ def unprotect(project: UVRevProject) -> None:
     success(f"{project.venv_path} is writable")
     if project.settings.protect:
         warning("The next change of the environment protects it again.")
+
+
+@cli.command("verify")
+@click.option("--fix", is_flag=True, help="Fix the problems found")
+@env_option
+def verify_cmd(project: UVRevProject, fix: bool) -> None:
+    """Check the venv against the RECORD files of the installed packages
+
+    Finds missing or modified files, untracked files and packages not in sync
+    with uv.lock. With --fix the affected packages are reinstalled and the venv
+    is protected again (if enabled), untracked files are only reported.
+    """
+    if fix:
+        fix_venv(project)
+        success("Environment is fine.")
+        return
+    problems = verify(project)
+    echo_problems(problems)
+    if errors := [problem for problem in problems if not problem.is_warning]:
+        error(f"{len(errors)} problem(s) found, fix them with 'uvrev verify --fix'")
+        sys.exit(1)
+    success("Environment is fine.")
 
 
 @cli.command()
