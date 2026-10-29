@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- The `.venv` of an environment is read-only (`chmod -R a-w .venv`), so it can not be changed by accident.
+  uvrev makes it writable (`chmod -R u+w .venv`) only while `uv` changes it, both modes are configurable.
+  `uvrev protect` and `uvrev unprotect` change the protection manually.
+- `uvrev verify` checks the `.venv` against the `RECORD` files of the installed packages
+  and `uv.lock`, `uvrev verify --fix` repairs it.
+  `--verify` runs it after `add`, `remove`, `sync`, `upgrade` and `restore`.
+- Settings file in the user config directory (e.g. `~/.config/uvrev/config.toml`),
+  loaded with [typed-settings](https://typed-settings.readthedocs.io/).
+  `uvrev settings` shows the settings and the location of the file.
+
+### Changed
+
+- Bytecode is compiled on install (setting `compile_bytecode`), as a protected `.venv` can not cache it.
+- `uvrev run` syncs the environment first if needed and runs the command with the protected `.venv`.
+
 ## [0.2] (2026-10-29)
 
 ### Added
@@ -52,6 +71,7 @@ First real release.
 - `uvrev history` shows the revisions and `uvrev restore` goes back to a previous one.
 - `uvrev path` shows the location of an environment.
 
-[0.2]: https://gitlab.com/Kound/uvrev/-/compare/0.1.4...main
+[Unreleased]: https://gitlab.com/Kound/uvrev/-/compare/0.2...main
+[0.2]: https://gitlab.com/Kound/uvrev/-/compare/0.1.4...0.2
 [0.1.4]: https://gitlab.com/Kound/uvrev/-/compare/0.1.3...0.1.4
 [0.1.3]: https://gitlab.com/Kound/uvrev/-/tags/0.1.3

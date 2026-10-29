@@ -73,6 +73,71 @@ uvrev --help
 | `uvrev restore`    | Restore project to a specific revision |
 | `uvrev path`       | Show the path to the current project |
 | `uvrev run`        | Run uv commands in the project |
+| `uvrev protect`    | Make the venv read-only |
+| `uvrev unprotect`  | Make the venv writable |
+| `uvrev verify`     | Check the venv against the installed packages, `--fix` repairs it |
+| `uvrev settings`   | Show the settings and the location of the settings file |
+
+---
+
+## Protected Environments
+
+By default the `.venv` of an environment is **read-only**: uvrev runs `chmod -R a-w .venv`,
+which removes all write permissions and keeps read and execute permissions as they are.
+So nobody can change the installed packages by accident, e.g. with `pip install` or an editor.
+
+uvrev makes the `.venv` writable (`chmod -R u+w .venv`) only while `uv` changes it and protects it
+again afterwards, even if `uv` fails. `uvrev run` syncs the environment first if needed and then
+runs the command with the protected `.venv`.
+
+```bash
+uvrev unprotect   # make the .venv writable, e.g. to debug something
+uvrev protect     # make it read-only again (the next change protects it anyway)
+```
+
+uv hardlinks the installed files from its cache, so `chmod` also changes the permissions of
+these files in the uv cache, and with that in other environments using the same files.
+If that is a problem, disable the protection or use other modes (see [Settings](#settings)).
+
+The protection needs the `chmod` command. If it is missing, uvrev stops with an error
+explaining how to disable the protection.
+
+## Verify Environments
+
+`uvrev verify` compares the `.venv` with the `RECORD` files of the installed packages and finds
+
+- missing or modified files,
+- packages not in sync with `uv.lock`,
+- files not installed by any package (only a warning).
+
+`uvrev verify` exits with `1` if problems were found.
+`uvrev verify --fix` reinstalls the affected packages and protects the `.venv` again (if enabled).
+Files not installed by any package are only reported, as they might be someone's work.
+
+To verify and fix the environment after every change, pass `--verify` to
+`add`, `remove`, `sync`, `upgrade` and `restore`, or enable `verify_after_change`.
+
+## Settings
+
+uvrev reads its settings from the `[uvrev]` table of a TOML file in the user config directory,
+e.g. `~/.config/uvrev/config.toml` on Linux (`uvrev settings` shows the exact location):
+
+```toml
+[uvrev]
+# Make the .venv read-only, so it can only be changed by uvrev
+protect = true
+# Mode for `chmod -R <mode> .venv` to protect the .venv
+protect_mode = "a-w"
+# Mode for `chmod -R <mode> .venv` to make the .venv writable again
+unprotect_mode = "u+w"
+# Compile bytecode on install, a protected .venv can not cache it later
+compile_bytecode = true
+# Run `uvrev verify --fix` after every change of an environment
+verify_after_change = false
+```
+
+Each setting can be overridden by an environment variable, e.g. `UVREV_PROTECT=false`.
+`UVREV_SETTINGS` can list additional settings files.
 
 ---
 
