@@ -12,10 +12,15 @@ type Names = tuple[NormalizedName, ...]
 
 @dataclass(frozen=True)
 class Changes:
-    """Changed names grouped by kind of change"""
+    """Changed names grouped by kind of change, every name is in one group only.
+
+    ``updated`` contains upgraded versions and changed specifiers,
+    ``downgraded`` the versions that decreased (never specifiers).
+    """
 
     added: Names
     updated: Names
+    downgraded: Names
     removed: Names
 
 
@@ -185,9 +190,19 @@ class Diff[T: DiffValue]:
         """Changed names grouped by kind of change.
 
         >>> Diff({'a': '1'}, {'b': '1'}).changes()
-        Changes(added=('b',), updated=(), removed=('a',))
+        Changes(added=('b',), updated=(), downgraded=(), removed=('a',))
+        >>> Diff(
+        ...     {'a': Version('2'), 'b': Version('1')},
+        ...     {'a': Version('1'), 'b': Version('2')},
+        ... ).changes()
+        Changes(added=(), updated=('b',), downgraded=('a',), removed=())
         """
-        return Changes(added=self.added, updated=self.updated, removed=self.removed)
+        return Changes(
+            added=self.added,
+            updated=self.upgraded,
+            downgraded=self.downgraded,
+            removed=self.removed,
+        )
 
     def versions(self) -> Mapping[NormalizedName, VersionChange]:
         """Old and new value of every changed name (None if absent).

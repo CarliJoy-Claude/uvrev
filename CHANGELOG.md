@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   A changed interpreter (e.g. a patch update of a uv managed Python) is recorded with the next revision.
   Existing environments get the file with their next revision.
 - `python` field in the JSON report with the old and new interpreter version, if it changed.
+- `downgraded` list in `changes` and `dependency_changes` of the JSON report.
 
 ### Changed
 
@@ -29,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - More ruff rules are enabled, among them all security related ones (`S`, `ASYNC`, `BLE`, `DTZ`, `G`, `LOG`, `PGH`, `T10`, `YTT`) and `RUF`.
 - CI tests the built package instead of an editable install of the source tree (`UV_NO_EDITABLE`).
   Coverage measures the package `uvrev` and maps installed files back to `src/uvrev`, doctests run with `--pyargs uvrev`.
+- JSON report `schema_version` 2: `updated` contains only upgrades, downgraded packages are listed in `downgraded` instead.
 - `uvrev restore` restores the pinned Python version (`.python-version`) as well.
   The virtual environment is recreated before the used interpreter is recorded.
   If uv fails (e.g. the Python version of that revision is not available), the files are reset to the last revision.
