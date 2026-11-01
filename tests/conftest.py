@@ -19,6 +19,7 @@ def fix_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     monkeypatch.delenv("UV_FROZEN", raising=False)
+    monkeypatch.delenv("UV_LOCKED", raising=False)
     monkeypatch.setenv("UV_LINK_MODE", "copy")
 
 

@@ -58,6 +58,10 @@ dev = [
     "pytest-dependency>=0.6.0",
     "ruff>=0.14.11",
 ]
+# Sign releases in CI: PEP 740 attestations for PyPI
+attestations = [
+    "pypi-attestations>=0.0.30",
+]
 
 [tool.pytest.ini_options]
 markers = [
@@ -68,6 +72,13 @@ markers = [
 branch = true
 source = ["src", "tests"]
 parallel = true
+
+# CI tests the installed (non-editable) package: report its files as src/uvrev
+[tool.coverage.paths]
+source = [
+    "src/uvrev",
+    "*/site-packages/uvrev",
+]
 
 [tool.coverage.report]
 show_missing = true

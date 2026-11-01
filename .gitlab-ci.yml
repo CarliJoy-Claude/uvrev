@@ -13,7 +13,10 @@ variables:
   BASE_LAYER: "trixie"
   UV_LINK_MODE: "copy"
   UV_CACHE_DIR: "${CI_PROJECT_DIR}/.uv-cache"
-  UV_FROZEN: "true"
+  # fail if uv.lock is not up to date with pyproject.toml
+  UV_LOCKED: "true"
+  # test the built package, not the source tree
+  UV_NO_EDITABLE: "true"
   UV_PYTHON_DOWNLOADS: "false"
   UV_PYTHON_PREFERENCE: "system"
 
@@ -87,7 +90,8 @@ attest:pypi:
     SIGSTORE_ID_TOKEN:
       aud: sigstore
   script:
-    - uvx --from "pypi-attestations==0.0.30" pypi-attestations sign dist/*
+    # pypi-attestations is locked in the "attestations" dependency group
+    - uv run --no-default-groups --no-install-project --group attestations pypi-attestations sign dist/*
   artifacts:
     paths:
       - dist/
