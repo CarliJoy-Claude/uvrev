@@ -172,7 +172,7 @@ class Receipt:
     def write(self, directory: Path) -> None:
         tmp = directory / f"{RECEIPT_NAME}.tmp"
         tmp.write_text(json.dumps(asdict(self), indent=2) + "\n")
-        os.replace(tmp, directory / RECEIPT_NAME)
+        tmp.replace(directory / RECEIPT_NAME)
 
 
 def is_url_or_path(spec: str) -> bool:

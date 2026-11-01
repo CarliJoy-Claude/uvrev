@@ -12,7 +12,7 @@ class TestParsePyprojectDeps:
 
     # Valid dependency specifications
     @pytest.mark.parametrize(
-        "content,expected_deps",
+        ("content", "expected_deps"),
         [
             # Basic dependencies
             (
@@ -63,7 +63,7 @@ class TestParsePyprojectDeps:
 
     # Empty or missing dependencies
     @pytest.mark.parametrize(
-        "content, expected",
+        ("content", "expected"),
         [
             ("", {}),
             ('[project]\nname = "test"', {}),
@@ -96,7 +96,7 @@ class TestParseUvLockPackages:
 
     # Valid package entries
     @pytest.mark.parametrize(
-        "content, expected_pkgs",
+        ("content", "expected_pkgs"),
         [
             (
                 dedent(
@@ -136,7 +136,7 @@ class TestParseUvLockPackages:
 
     # Empty or missing packages
     @pytest.mark.parametrize(
-        "content,expected",
+        ("content", "expected"),
         [
             ("", {}),
             ('[metadata]\nversion = "1.0"', {}),

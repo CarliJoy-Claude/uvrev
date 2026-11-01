@@ -44,16 +44,15 @@ def get_base_dir() -> Path:
 
 
 def env_option_callback(
-    ctx: click.Context | None, param: click.Parameter | None, value: str | None
+    _ctx: click.Context | None, _param: click.Parameter | None, value: str | None
 ) -> UVRevProject:
     if value is None and (venv := os.getenv("VIRTUAL_ENV")) and venv != sys.prefix:
         proj = UVRevProject(Path(venv).parent)
         if proj.exists():
             return proj
-        else:
-            warning(
-                f"Currently activated VIRTUAL_ENV ({venv}) is not a uvrev env. Ignoring."
-            )
+        warning(
+            f"Currently activated VIRTUAL_ENV ({venv}) is not a uvrev env. Ignoring."
+        )
 
     name = value or constants.DEFAULT_ENV
     proj = UVRevProject(get_base_dir() / name)
@@ -134,7 +133,6 @@ def cli() -> None:
 @cli.group()
 def env() -> None:
     """Manage environments"""
-    pass
 
 
 @env.command("create")

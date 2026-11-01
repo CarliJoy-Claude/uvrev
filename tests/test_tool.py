@@ -164,7 +164,7 @@ class TestParseSpec:
             parse_spec(spec)
 
     def test_extras(self) -> None:
-        with pytest.raises(ToolError, match="use --extra a --extra b$"):
+        with pytest.raises(ToolError, match=r"use --extra a --extra b$"):
             parse_spec("tool[b,a]==1.0")
 
     @pytest.mark.parametrize(
@@ -253,7 +253,9 @@ class TestDownload:
                 302, headers={"Location": "http://b.example/w.whl"}
             ),
         }
-        with pytest.raises(ToolError, match="from https to insecure http://b.example"):
+        with pytest.raises(
+            ToolError, match=re.escape("from https to insecure http://b.example")
+        ):
             download(
                 "https://a.example/w.whl",
                 tmp_path / "w.whl",
@@ -276,7 +278,7 @@ class TestDownload:
 
     def test_http_error(self, tmp_path: Path) -> None:
         responses = {"https://a.example/w.whl": httpx2.Response(403)}
-        with pytest.raises(ToolError, match="Can not download .*403 Forbidden"):
+        with pytest.raises(ToolError, match=r"Can not download .*'403 Forbidden'"):
             download(
                 "https://a.example/w.whl",
                 tmp_path / "w.whl",
@@ -328,11 +330,15 @@ class TestCheckEmbedded:
         )
 
     def test_invalid_toml(self) -> None:
-        with pytest.raises(ToolError, match="embedded uv.lock is not valid TOML"):
+        with pytest.raises(
+            ToolError, match=re.escape("embedded uv.lock is not valid TOML")
+        ):
             check_embedded(EmbeddedProject(b"[[", PYPROJECT), NAME, ())
 
     def test_invalid_encoding(self) -> None:
-        with pytest.raises(ToolError, match="pyproject.toml is not valid TOML"):
+        with pytest.raises(
+            ToolError, match=re.escape("pyproject.toml is not valid TOML")
+        ):
             check_embedded(EmbeddedProject(LOCK, b"\xff"), NAME, ())
 
     @pytest.mark.parametrize(
@@ -355,7 +361,9 @@ class TestCheckEmbedded:
         ],
     )
     def test_lock_without_project(self, lock: bytes) -> None:
-        with pytest.raises(ToolError, match="embedded uv.lock has no package"):
+        with pytest.raises(
+            ToolError, match=re.escape("embedded uv.lock has no package")
+        ):
             check_embedded(EmbeddedProject(lock, PYPROJECT), NAME, ())
 
     def test_dynamic(self) -> None:
@@ -371,7 +379,10 @@ class TestCheckEmbedded:
 
     def test_unknown_extra(self) -> None:
         pyproject = b"[project]\nname = 'my-tool'"
-        with pytest.raises(ToolError, match="Unknown extra.*: fast. Available: none"):
+        with pytest.raises(
+            ToolError,
+            match=re.escape("Unknown extra(s) of 'my-tool': fast. Available: none"),
+        ):
             check_embedded(
                 EmbeddedProject(LOCK, pyproject), NAME, (NormalizedName("fast"),)
             )
@@ -385,14 +396,16 @@ class TestDistInfo:
 
     def test_missing(self, tmp_path: Path) -> None:
         (tmp_path / "other-1.0.dist-info").mkdir()
-        with pytest.raises(ToolError, match="Expected exactly one .* found 0"):
+        with pytest.raises(ToolError, match=r"Expected exactly one .* found 0"):
             find_dist_info(tmp_path, NAME)
 
     def test_read_partially_embedded(self, tmp_path: Path) -> None:
         folder = tmp_path / "my_tool-1.0.dist-info" / "extra_metadata"
         folder.mkdir(parents=True)
         (folder / "pyproject.toml").write_bytes(PYPROJECT)
-        with pytest.raises(ToolError, match="not contain extra_metadata/uv.lock:"):
+        with pytest.raises(
+            ToolError, match=re.escape("not contain extra_metadata/uv.lock:")
+        ):
             read_embedded(folder.parent)
 
     def test_read(self, tmp_path: Path) -> None:

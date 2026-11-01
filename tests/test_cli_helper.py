@@ -41,12 +41,12 @@ class TestEnvOptionCallback:
 
     def test_selected_missing(self, fake_basedir: Path) -> None:
         """Raise exception if default env is missing"""
-        with pytest.raises(click.BadParameter, match=".*foobar.*does not exist"):
+        with pytest.raises(click.BadParameter, match=r"'foobar' does not exist"):
             env_option_callback(None, None, "foobar")
 
     def test_default_missing(self, fake_basedir: Path) -> None:
         """Raise exception if default env is missing"""
-        with pytest.raises(click.BadParameter, match=".*base.*does not exist"):
+        with pytest.raises(click.BadParameter, match=r"'base' does not exist"):
             env_option_callback(None, None, None)
 
     def test_default_is_existing(self, fake_basedir: Path) -> None:

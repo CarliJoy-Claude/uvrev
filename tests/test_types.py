@@ -50,7 +50,7 @@ class TestNormalizedRequirement:
 
     # Names are canonicalized
     @pytest.mark.parametrize(
-        "req_string,expected_name",
+        ("req_string", "expected_name"),
         [
             ("Scikit-Learn>=1.0", "scikit-learn"),
             ("scikit_learn>=1.0", "scikit-learn"),
@@ -78,7 +78,7 @@ class TestNormalizedRequirement:
 
     # Specifiers are preserved
     @pytest.mark.parametrize(
-        "req_string,expected_specifier",
+        ("req_string", "expected_specifier"),
         [
             ("pandas>=2.0", ">=2.0"),
             ("numpy~=1.24.0", "~=1.24.0"),

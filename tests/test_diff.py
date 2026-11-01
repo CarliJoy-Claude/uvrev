@@ -13,7 +13,7 @@ class TestDiffLines:
 
     # Package additions
     @pytest.mark.parametrize(
-        "old, new, expected_count",
+        ("old", "new", "expected_count"),
         [
             ({"pandas": ">=1.0"}, {"pandas": ">=1.0", "numpy": ""}, 1),
             ({}, {"pandas": ">=2.0", "numpy": "", "scipy": ">=1.5"}, 3),
@@ -38,7 +38,7 @@ class TestDiffLines:
 
     # Package removals
     @pytest.mark.parametrize(
-        "old,new,expected_count",
+        ("old", "new", "expected_count"),
         [
             ({"pandas": ">=1.0", "numpy": ""}, {"pandas": ">=1.0"}, 1),
             ({"pandas": ">=2.0", "numpy": "", "scipy": ">=1.5"}, {}, 3),
@@ -63,7 +63,7 @@ class TestDiffLines:
 
     # Package updates
     @pytest.mark.parametrize(
-        "old,new,expected_count",
+        ("old", "new", "expected_count"),
         [
             ({"pandas": ">=1.0"}, {"pandas": ">=2.0"}, 1),
             (

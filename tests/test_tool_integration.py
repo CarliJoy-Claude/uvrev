@@ -467,8 +467,14 @@ def test_killed_during_sync(
     env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
 
     killed = subprocess.run(
-        (sys.executable, "-c", "from uvrev.cli import cli; cli()")
-        + ("tool", "run", "uvrev-fx-app==1.0"),
+        (
+            sys.executable,
+            "-c",
+            "from uvrev.cli import cli; cli()",
+            "tool",
+            "run",
+            "uvrev-fx-app==1.0",
+        ),
         env=env,
         check=False,
     )
