@@ -1,5 +1,6 @@
 import json
 import shutil
+from itertools import chain
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -37,8 +38,7 @@ def shared_basedir_folder(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
     Normally tests should be independent of other tests
     """
-    tmpdir = tmp_path_factory.mktemp("shared_basedir")
-    return tmpdir
+    return tmp_path_factory.mktemp("shared_basedir")
 
 
 @pytest.fixture
@@ -114,7 +114,10 @@ def parse_report(result: Result) -> dict[str, Any]:
         ("changes", "all_changed_packages"),
         ("dependency_changes", "all_changed_dependencies"),
     ):
-        assert sorted(sum(report[changes].values(), [])) == report[all_changed]
+        assert (
+            sorted(chain.from_iterable(report[changes].values()))
+            == (report[all_changed])
+        )
     return report
 
 
@@ -163,7 +166,7 @@ class TestCLIDefinition:
             ["env", "--help"],
             ["env", "create", "--help"],
         ],
-        ids=lambda x: " ".join(x),
+        ids=" ".join,
     )
     def test_help_available(self, invoke: Invoker, command: list[str]) -> None:
         """Help text is available."""
@@ -193,7 +196,7 @@ class TestEnvCreate:
         assert "already exists" in result.output
 
     @pytest.mark.parametrize(
-        "cmd, folder",
+        ("cmd", "folder"),
         [
             pytest.param(
                 ["env", "create"],
@@ -418,7 +421,6 @@ class TestUpgrade:
 
         # History describes the update
         history = show_history(upgradeable_project)
-        print(history)
         assert "Upgraded all packages" in history
         assert f"^{sample_pkg}==3.0.0 →" in history
         assert f"^{sample_dep}==0.5 →" in history
@@ -456,7 +458,6 @@ class TestUpgrade:
 
         # History describes the update
         history = show_history(upgradeable_project)
-        print(history)
         assert f"Upgraded: {sample_pkg}" in history
         assert f"^{sample_pkg}==3.0.0 →" in history
         assert f"^{sample_dep}==0.5 →" not in history
@@ -494,7 +495,6 @@ class TestUpgrade:
 
         # History describes the update
         history = show_history(upgradeable_project)
-        print(history)
         assert f"Upgraded: {sample_dep}" in history
         assert f"^{sample_pkg}==3.0.0 →" not in history
         assert f"^{sample_dep}==0.5 →" in history
@@ -639,7 +639,6 @@ class TestCliIntegration:
     def test_history(self, invoke: Invoker, shared_project: UVRevProject) -> None:
         result = invoke("history")
         assert result.exit_code == 0
-        print(result.output)
 
     @pytest.mark.dependency(name="5-add-transitive", depends=["3-restore"])
     def test_add_transitive_json(
@@ -678,7 +677,7 @@ class TestCommon:
             ["path"],
             ["run", "pytest"],
         ],
-        ids=lambda x: " ".join(x),
+        ids=" ".join,
     )
     def test_missing_env(
         self,

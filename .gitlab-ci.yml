@@ -1,17 +1,22 @@
 stages:
   - test
+  - build
+  - attest
   - publish
 
 # Template: https://docs.astral.sh/uv/guides/integration/gitlab/#using-the-uv-image
 # Key points:
 # - Use ghcr.io/astral-sh/uv:<UV_VERSION>-python<UV_PYTHON>-<BASE_LAYER>
-# - Set UV_LINK_MODE=copy for GitLab’s mount behavior
 variables:
   UV_VERSION: "0.13.6"
   BASE_LAYER: "trixie"
-  UV_LINK_MODE: "copy"
-  UV_CACHE_DIR: "${CI_PROJECT_DIR}/.uv-cache"
-  UV_FROZEN: "true"
+  # Use local cache dir so that we can use the GitLab cache.
+  # This way, we can also keep the default "link-mode".
+  UV_CACHE_DIR: '$CI_PROJECT_DIR/.cache/uv'
+  # fail if uv.lock is not up to date with pyproject.toml
+  UV_LOCKED: "true"
+  # test the built package, not the source tree
+  UV_NO_EDITABLE: "true"
   UV_PYTHON_DOWNLOADS: "false"
   UV_PYTHON_PREFERENCE: "system"
 
@@ -54,16 +59,51 @@ test:
         path: coverage.xml
 
 # -------------------------
-# Publish to PyPI (Trusted Publisher / OIDC)
+# Release to PyPI (tags only): build -> attest -> publish
+# The jobs are separate, so each holds only the OIDC token it needs.
 # -------------------------
-publish:pypi:
-  stage: publish
-  # Build/publish once (pick a stable version for publishing)
+build:dist:
+  stage: build
   variables:
     UV_PYTHON: "3.12"
   rules:
-    # Typical choice: publish only for tags
     - if: $CI_COMMIT_TAG
+  script:
+    - uv build
+  artifacts:
+    paths:
+      - dist/
+
+# Sign the distributions with Sigstore, creating PEP 740 attestations
+# (dist/*.publish.attestation). PyPI shows them as provenance.
+# See https://docs.pypi.org/attestations/producing-attestations/
+attest:pypi:
+  stage: attest
+  variables:
+    UV_PYTHON: "3.12"
+  rules:
+    - if: $CI_COMMIT_TAG
+  needs:
+    - build:dist
+  # sigstore picks up SIGSTORE_ID_TOKEN as ambient credential on GitLab
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    # pypi-attestations is locked in the "attestations" dependency group
+    - uv run --no-default-groups --no-install-project --group attestations pypi-attestations sign dist/*
+  artifacts:
+    paths:
+      - dist/
+
+publish:pypi:
+  stage: publish
+  variables:
+    UV_PYTHON: "3.12"
+  rules:
+    - if: $CI_COMMIT_TAG
+  needs:
+    - attest:pypi
   # Request an OIDC token from GitLab with the audience expected by PyPI ("pypi")
   # This matches PyPI's GitLab Trusted Publishing guidance.
   id_tokens:
@@ -76,10 +116,11 @@ publish:pypi:
     # If your tooling expects CI_JOB_JWT_V2, map the token (safe no-op if unused).
     - export CI_JOB_JWT_V2="$PYPI_ID_TOKEN"
 
-    # Build distributions
-    - uv build
+    # Refuse to publish without attestations, uv would silently upload without them
+    - ls dist/*.whl.publish.attestation dist/*.tar.gz.publish.attestation
 
     # Publish using Trusted Publishing (OIDC). No API token needed if PyPI Trusted Publisher is configured.
+    # uv uploads the matching dist/*.publish.attestation files together with the distributions.
     - uv publish --trusted-publishing=always
   artifacts:
     when: always

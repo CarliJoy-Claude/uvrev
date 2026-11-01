@@ -73,6 +73,7 @@ uvrev --help
 | `uvrev restore`    | Restore project to a specific revision |
 | `uvrev path`       | Show the path to the current project |
 | `uvrev run`        | Run uv commands in the project |
+| `uvrev tool run`   | Run a tool like `uvx`, with the dependencies locked in its release |
 
 ---
 
@@ -159,6 +160,52 @@ source .venv/bin/activate
 Once activated, all `uvrev` commands operate on that environment automatically. No additional flags or environment variables are required.
 
 This mirrors standard Python workflows and avoids implicit global state.
+
+---
+
+## Running Tools with Locked Dependencies
+
+`uvrev tool run` works like `uvx`, but installs the dependencies of the tool exactly as pinned in the `uv.lock` of its release.
+
+```bash
+uvrev tool run mytool --help
+uvrev tool run --from mytool==1.2 --extra fast mytool-cli -v
+uvrev tool run --from ./dist/mytool-1.2-py3-none-any.whl mytool
+uvrev tool run --from "mytool @ https://example.com/mytool-1.2-py3-none-any.whl" mytool
+```
+
+```
+uvrev tool run [--from SPEC] [--extra NAME]... [--python PYTHON] [--refresh] COMMAND [ARGS]...
+```
+
+- Without `--from`, `COMMAND` is also the package name.
+- `SPEC` is one of:
+  - `name` or `name==version` from the package index; without a version the latest one is resolved by uv.
+  - The path or URL (`http(s)://`, `file://`) of a wheel, or `name @ URL`.
+    Without `--from`, the command is the normalized package name from the wheel filename.
+- `--extra` installs an extra of the package, it can be repeated.
+- `--python` is passed to uv, `--refresh` rebuilds the cached environment.
+- Everything after `COMMAND` is passed to the command unchanged.
+
+The release must be a wheel built with the hatchling build hook `hatch-uv-lock`,
+which embeds the original `uv.lock` and `pyproject.toml` in `<name>-<version>.dist-info/extra_metadata/`.
+Releases without them are refused, there is no fallback to an unlocked install.
+The dependencies are installed with `uv sync --locked`, so a release whose lock was outdated at build time is refused too.
+Projects with dynamic `dependencies`, `optional-dependencies` or `requires-python` are not supported,
+as uv would need the source tree to build that metadata. A dynamic `version` is fine.
+
+Index releases can not change, so the cached environment of a release is identified by its version.
+A wheel from a path or URL can change with the same version, e.g. after a rebuild.
+So it is identified by its sha256: it is copied (or downloaded) on every run, and a changed wheel gets a new environment.
+URLs are downloaded by uvrev directly with [httpx2](https://github.com/pydantic/httpx2), uv's index credentials are not used for them.
+The download uses the trust store of the OS (or `SSL_CERT_FILE`/`SSL_CERT_DIR`) and timeouts, and an `https` download is never redirected to `http`.
+A `#sha256=<hex>` fragment in a URL is verified, e.g. `https://example.com/mytool-1.2-py3-none-any.whl#sha256=…`.
+Plain `http` URLs without it work, but uvrev warns that the integrity of the wheel is not verified.
+sdists, source directories and VCS URLs are not supported, as they would need a build of the source tree.
+To run a tool from its source tree with its locked dependencies, use `uv sync --locked` there.
+
+uv's normal configuration is used (indexes, credentials), except `UV_FROZEN`, `UV_LOCKED`, `UV_NO_SYNC` and `UV_PROJECT_ENVIRONMENT`, which are ignored.
+The environments are cached in `tools/` of the uvrev cache directory (`platformdirs.user_cache_dir("uvrev")`, can be changed with `UVREV_CACHE`).
 
 ---
 

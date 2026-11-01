@@ -11,6 +11,8 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "click>=8",
+    "filelock>=3.12",
+    "httpx2>=2.16",
     "packaging>=25.0",
     "platformdirs>=4",
     "tomlkit>=0.13",
@@ -57,11 +59,27 @@ dev = [
     "pytest-dependency>=0.6.0",
     "ruff>=0.14.11",
 ]
+# Sign releases in CI: PEP 740 attestations for PyPI
+attestations = [
+    "pypi-attestations>=0.0.30",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "network: needs access to PyPI",
+]
 
 [tool.coverage.run]
 branch = true
 source = ["src", "tests"]
 parallel = true
+
+# CI tests the installed (non-editable) package: report its files as src/uvrev
+[tool.coverage.paths]
+source = [
+    "src/uvrev",
+    "*/site-packages/uvrev",
+]
 
 [tool.coverage.report]
 show_missing = true
@@ -98,23 +116,58 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-# Sensible default rule set
 select = [
-    "F",    # Pyflakes
-    "E",    # pycodestyle errors
-    "W",    # pycodestyle warnings
-    "I",    # isort
-    "B",    # flake8-bugbear
-    "UP",   # pyupgrade
-    "SIM",  # flake8-simplify
-    "C4",   # flake8-comprehensions
+    "F",     # Pyflakes
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "I",     # isort
+    "B",     # flake8-bugbear
+    "UP",    # pyupgrade
+    "SIM",   # flake8-simplify
+    "C4",    # flake8-comprehensions
+    "RUF",   # Ruff-specific rules
+    # Security related
+    "S",     # flake8-bandit
+    "ASYNC", # flake8-async
+    "BLE",   # flake8-blind-except
+    "DTZ",   # flake8-datetimez
+    "G",     # flake8-logging-format
+    "LOG",   # flake8-logging
+    "PGH",   # pygrep-hooks (no blanket noqa / type: ignore)
+    "T10",   # flake8-debugger
+    "YTT",   # flake8-2020
+    # Correctness and style
+    "A",     # flake8-builtins
+    "ARG",   # flake8-unused-arguments
+    "ERA",   # eradicate (commented-out code)
+    "EXE",   # flake8-executable
+    "FA",    # flake8-future-annotations
+    "FURB",  # refurb
+    "ICN",   # flake8-import-conventions
+    "ISC",   # flake8-implicit-str-concat
+    "N",     # pep8-naming
+    "PERF",  # Perflint
+    "PIE",   # flake8-pie
+    "PL",    # Pylint
+    "PT",    # flake8-pytest-style
+    "PTH",   # flake8-use-pathlib
+    "RET",   # flake8-return
+    "SLF",   # flake8-self
+    "T20",   # flake8-print
+    "TID",   # flake8-tidy-imports
+    "TRY",   # tryceratops
 ]
 
-# Rules that are commonly noisy or conflict with formatters
 ignore = [
-    "E203", # whitespace before ':' (Black compatibility)
-    "E266", # too many leading '#' for block comment
-    "E501", # line length handled by formatter
+    "E203",    # whitespace before ':' (Black compatibility)
+    "E266",    # too many leading '#' for block comment
+    "E501",    # line length handled by formatter
+    # Flags every subprocess call. All calls pass argument tuples, never shell=True,
+    # so there is no shell injection. S602/S604/S605 still catch shell usage.
+    "S603",
+    "PLR0913", # too many arguments: click commands get one parameter per option
+    "PLR0917", # too many positional arguments: same as PLR0913
+    "TRY003",  # long messages in raise: the code base uses descriptive messages
 ]
 fixable = ["ALL"]
 
@@ -126,8 +179,10 @@ known-first-party = ["src"]
 [tool.ruff.lint.per-file-ignores]
 # Tests can be more permissive
 "tests/**" = [
-    "S101", # assert usage
+    "S101",    # assert usage
     "PLR2004", # magic values
+    "S607",    # uv and git are started from PATH, like in uvrev itself
+    "ARG",     # fixtures are often requested only for their side effects
 ]
 
 [tool.hatch.version]

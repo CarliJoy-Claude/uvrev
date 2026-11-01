@@ -7,7 +7,7 @@ from typing import Any
 import click
 from platformdirs import user_data_path
 
-from uvrev.exceptions import RevisionNotFoundError
+from uvrev.exceptions import RevisionNotFoundError, ToolError
 
 from . import constants
 from .commands import uv
@@ -25,6 +25,7 @@ from .operations import (
 )
 from .report import Report, RevisionChange
 from .terminal import fatal_error, success, warning
+from .tool import run_tool
 from .types import Revision, UVRevProject
 
 
@@ -43,16 +44,15 @@ def get_base_dir() -> Path:
 
 
 def env_option_callback(
-    ctx: click.Context | None, param: click.Parameter | None, value: str | None
+    _ctx: click.Context | None, _param: click.Parameter | None, value: str | None
 ) -> UVRevProject:
     if value is None and (venv := os.getenv("VIRTUAL_ENV")) and venv != sys.prefix:
         proj = UVRevProject(Path(venv).parent)
         if proj.exists():
             return proj
-        else:
-            warning(
-                f"Currently activated VIRTUAL_ENV ({venv}) is not a uvrev env. Ignoring."
-            )
+        warning(
+            f"Currently activated VIRTUAL_ENV ({venv}) is not a uvrev env. Ignoring."
+        )
 
     name = value or constants.DEFAULT_ENV
     proj = UVRevProject(get_base_dir() / name)
@@ -133,7 +133,6 @@ def cli() -> None:
 @cli.group()
 def env() -> None:
     """Manage environments"""
-    pass
 
 
 @env.command("create")
@@ -289,3 +288,57 @@ def run(project: UVRevProject, run_args: tuple[str, ...]) -> None:
         uvrev run -- myapp --help
     """
     uv("run", "--locked", *run_args, project=project, keep_stdout=True)
+
+
+@cli.group()
+def tool() -> None:
+    """Run tools with the dependencies locked in their release"""
+
+
+@tool.command("run", context_settings={"allow_interspersed_args": False})
+@click.option(
+    "--from",
+    "from_spec",
+    metavar="SPEC",
+    default=None,
+    help=(
+        "Package providing COMMAND: 'name', 'name==version', 'name @ URL' or the "
+        "path or URL of a wheel (default: COMMAND)"
+    ),
+)
+@click.option(
+    "--extra",
+    "extras",
+    metavar="NAME",
+    multiple=True,
+    help="Install an extra of the package, can be repeated",
+)
+@click.option("--python", default=None, help="Python interpreter, passed to uv")
+@click.option("--refresh", is_flag=True, help="Rebuild the cached environment")
+@click.argument("command")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def tool_run(
+    from_spec: str | None,
+    extras: tuple[str, ...],
+    python: str | None,
+    refresh: bool,
+    command: str,
+    args: tuple[str, ...],
+) -> None:
+    """Run COMMAND like uvx, with the dependencies pinned in the release's uv.lock
+
+    The release must be a wheel built with hatch-uv-lock, which embeds the
+    uv.lock and pyproject.toml of the project. Everything after COMMAND is
+    passed to it unchanged.
+
+    \b
+    Examples:
+        uvrev tool run mytool --help
+        uvrev tool run --from mytool==1.2 --extra fast mytool-cli -v
+        uvrev tool run --from ./dist/mytool-1.2-py3-none-any.whl mytool
+    """
+    try:
+        exit_code = run_tool(command, args, from_spec, extras, python, refresh)
+    except ToolError as e:
+        fatal_error(str(e))
+    sys.exit(exit_code)

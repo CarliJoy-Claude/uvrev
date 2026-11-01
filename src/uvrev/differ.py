@@ -6,7 +6,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import NormalizedName
 from packaging.version import Version
 
-type DiffValue = Version | SpecifierSet | None | str
+type DiffValue = Version | SpecifierSet | str | None
 type Names = tuple[NormalizedName, ...]
 
 
@@ -40,7 +40,7 @@ def version2str(ver: DiffValue) -> str:
     """
     if ver is None:
         return ""
-    elif isinstance(ver, Version):
+    if isinstance(ver, Version):
         return f"=={ver}"
     return str(ver)
 
