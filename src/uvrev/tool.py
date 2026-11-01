@@ -17,7 +17,6 @@ import shutil
 import subprocess
 import tempfile
 import tomllib
-import urllib.request
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -29,6 +28,7 @@ from typing import Any, Final
 from urllib.parse import unquote, urlsplit
 from urllib.request import url2pathname
 
+import httpx2
 from filelock import FileLock
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import (
@@ -42,6 +42,7 @@ from platformdirs import user_cache_path
 
 from .commands import show_cmd, uv_tool
 from .exceptions import ToolError
+from .terminal import warning
 from .types import SubprocessFailure
 
 RECEIPT_NAME: Final[str] = "uvrev-receipt.json"
@@ -58,6 +59,9 @@ DYNAMIC_NEEDS_SOURCE: Final[tuple[str, ...]] = (
     "requires-python",
 )
 ARCHIVE_SUFFIXES: Final[tuple[str, ...]] = (".whl", ".zip", ".tar.gz", ".tgz")
+# connect, read, write and pool timeout of each operation, not of the whole download
+DOWNLOAD_TIMEOUT: Final[httpx2.Timeout] = httpx2.Timeout(30.0)
+SHA256_HEX_LENGTH: Final[int] = 64
 SUPPORTED_SPEC: Final[str] = (
     "Give 'name', 'name==version' or the path or URL of a wheel"
 )
@@ -72,6 +76,8 @@ class WheelLocation:
     # URL for remote wheels, path for local ones (file:// URLs become paths)
     source: str
     remote: bool
+    # expected sha256 from the #sha256=... fragment of an URL
+    sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -184,12 +190,40 @@ def is_url_or_path(spec: str) -> bool:
     )
 
 
+def parse_hash_fragment(fragment: str) -> str | None:
+    """Expected sha256 from an URL fragment like ``sha256=<hex>`` (PEP 503)
+
+    Examples:
+        >>> parse_hash_fragment("")
+        >>> parse_hash_fragment("sha256=" + "A" * 64) == "a" * 64
+        True
+        >>> parse_hash_fragment("md5=abc")
+        Traceback (most recent call last):
+        ...
+        uvrev.exceptions.ToolError: Unsupported hash in the URL fragment '#md5=abc': only #sha256=<hex> is supported
+    """
+    if not fragment:
+        return None
+    algorithm, _, digest = fragment.partition("=")
+    digest = digest.lower()
+    if (
+        algorithm != "sha256"
+        or len(digest) != SHA256_HEX_LENGTH
+        or any(c not in "0123456789abcdef" for c in digest)
+    ):
+        raise ToolError(
+            f"Unsupported hash in the URL fragment '#{fragment}': "
+            "only #sha256=<hex> is supported"
+        )
+    return digest
+
+
 def parse_wheel_location(location: str) -> WheelLocation:
     """Parse the path or URL of a wheel.
 
     Examples:
         >>> parse_wheel_location("https://host/My_Tool-1.0-py3-none-any.whl?x=1")
-        WheelLocation(filename='My_Tool-1.0-py3-none-any.whl', version=<Version('1.0')>, source='https://host/My_Tool-1.0-py3-none-any.whl?x=1', remote=True)
+        WheelLocation(filename='My_Tool-1.0-py3-none-any.whl', version=<Version('1.0')>, source='https://host/My_Tool-1.0-py3-none-any.whl?x=1', remote=True, sha256=None)
         >>> parse_wheel_location("file:///wheels/tool-2.0-py3-none-any.whl").source
         '/wheels/tool-2.0-py3-none-any.whl'
         >>> parse_wheel_location("dist/tool-2.0-py3-none-any.whl").remote
@@ -197,12 +231,15 @@ def parse_wheel_location(location: str) -> WheelLocation:
     """
     parts = urlsplit(location)
     scheme = parts.scheme.lower()
+    sha256: str | None = None
     if scheme in ("http", "https"):
         filename = unquote(PurePosixPath(parts.path).name)
-        source = location
+        source = parts._replace(fragment="").geturl()
+        sha256 = parse_hash_fragment(parts.fragment)
     elif scheme == "file":
         source = url2pathname(unquote(parts.path))
         filename = Path(source).name
+        sha256 = parse_hash_fragment(parts.fragment)
     elif "://" in location:
         raise ToolError(
             f"Unsupported URL '{location}': only http(s) and file URLs of wheels "
@@ -221,7 +258,9 @@ def parse_wheel_location(location: str) -> WheelLocation:
         _, version, _, _ = parse_wheel_filename(filename)
     except InvalidWheelFilename as e:
         raise ToolError(f"Invalid wheel filename '{filename}': {e}") from None
-    return WheelLocation(filename, version, source, remote=scheme in ("http", "https"))
+    return WheelLocation(
+        filename, version, source, remote=scheme in ("http", "https"), sha256=sha256
+    )
 
 
 def parse_spec(spec: str) -> ToolSpec:
@@ -288,6 +327,41 @@ def parse_spec(spec: str) -> ToolSpec:
     return ToolSpec(name, Version(specifiers[0].version), requirement.name)
 
 
+def refuse_insecure_redirect(request: httpx2.Request) -> None:
+    """Request hook: an https download must not be redirected to http"""
+    if request.url.scheme != "https":
+        raise ToolError(f"Refusing the redirect from https to insecure {request.url}")
+
+
+def download(
+    url: str, target: Path, transport: httpx2.BaseTransport | None = None
+) -> None:
+    """Download with the trust store of the OS, timeouts and safe redirects.
+
+    Args:
+        transport: Only for tests
+    """
+    hooks: dict[str, list[Any]] = {}
+    if urlsplit(url).scheme == "https":
+        hooks["request"] = [refuse_insecure_redirect]
+    try:
+        with (
+            httpx2.Client(
+                follow_redirects=True,
+                timeout=DOWNLOAD_TIMEOUT,
+                event_hooks=hooks,
+                transport=transport,
+            ) as client,
+            client.stream("GET", url) as response,
+        ):
+            response.raise_for_status()
+            with target.open("wb") as file:
+                for chunk in response.iter_bytes():
+                    file.write(chunk)
+    except httpx2.HTTPError as e:
+        raise ToolError(f"Can not download the wheel {url}: {e}") from None
+
+
 def fetch_wheel(wheel: WheelLocation, directory: Path) -> Path:
     """Copy or download the wheel into the directory.
 
@@ -296,15 +370,13 @@ def fetch_wheel(wheel: WheelLocation, directory: Path) -> Path:
     """
     target = directory / wheel.filename
     if wheel.remote:
+        if urlsplit(wheel.source).scheme == "http" and wheel.sha256 is None:
+            warning(
+                f"{wheel.source} is downloaded over plain http without "
+                "#sha256=<hex> in the URL, so its integrity is not verified"
+            )
         show_cmd(("download", wheel.source))
-        try:
-            with (
-                urllib.request.urlopen(wheel.source) as response,
-                target.open("wb") as file,
-            ):
-                shutil.copyfileobj(response, file)
-        except (OSError, ValueError) as e:
-            raise ToolError(f"Can not download the wheel {wheel.source}: {e}") from None
+        download(wheel.source, target)
     else:
         try:
             shutil.copyfile(Path(wheel.source).expanduser(), target)
@@ -320,13 +392,19 @@ def tool_request(
     normalized_extras = normalize_extras(extras)
     if spec.wheel is not None:
         wheel = fetch_wheel(spec.wheel, directory)
+        digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        if spec.wheel.sha256 is not None and digest != spec.wheel.sha256:
+            raise ToolError(
+                f"The sha256 of {spec.wheel.source} is {digest}, "
+                f"but {spec.wheel.sha256} was expected"
+            )
         return ToolRequest(
             spec.name,
             spec.wheel.version,
             normalized_extras,
             python,
             wheel=wheel,
-            wheel_sha256=hashlib.sha256(wheel.read_bytes()).hexdigest(),
+            wheel_sha256=digest,
             origin=spec.wheel.source,
         )
     if spec.version is None:

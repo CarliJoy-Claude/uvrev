@@ -569,6 +569,27 @@ class TestWheelPathOrUrl:
         (directory,) = tool_dirs(tool_env, "uvrev-fx-app")
         assert json.loads((directory / RECEIPT_NAME).read_text())["source"] == url
 
+    def test_url_with_hash(
+        self,
+        find_links: Path,
+        wheel_server: str,
+        capfd: pytest.CaptureFixture[str],
+        uv_calls: list[tuple[str, ...]],
+    ) -> None:
+        wheel = app_wheel(find_links)
+        url = f"{wheel_server}/{wheel.name}"
+        digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+
+        wrong = run(f"{url}#sha256={'0' * 64}")
+        assert wrong.exit_code == 1
+        assert f"is {digest}, but {'0' * 64} was expected" in wrong.stderr
+        assert syncs(uv_calls) == 0
+
+        result = run(f"{url}#sha256={digest}", "ok")
+        assert result.exit_code == 0, result.output
+        assert "integrity is not verified" not in result.stderr
+        assert tool_output(capfd)["args"] == ["ok"]
+
     def test_url_not_found(self, wheel_server: str) -> None:
         result = run(f"{wheel_server}/uvrev_fx_missing-1.0-py3-none-any.whl")
         assert result.exit_code == 1

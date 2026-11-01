@@ -1,11 +1,13 @@
 """Unit tests of uvrev tool, see test_tool_integration.py for real wheels"""
 
+import hashlib
 import json
 import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
+import httpx2
 import pytest
 from click.testing import CliRunner
 from packaging.utils import NormalizedName
@@ -22,6 +24,7 @@ from uvrev.tool import (
     ToolSpec,
     check_embedded,
     console_scripts,
+    download,
     ensure_environment,
     fetch_wheel,
     find_dist_info,
@@ -33,10 +36,12 @@ from uvrev.tool import (
     run_tool,
     sync_dependencies,
     tool_directory,
+    tool_request,
     uv_environment,
 )
 from uvrev.types import SubprocessFailure
 
+SHA = "ab" * 32
 NAME = NormalizedName("my-tool")
 REQUEST = ToolRequest(NAME, Version("1.0"), (), None)
 
@@ -92,9 +97,9 @@ class TestParseSpec:
                 True,
             ),
             (
-                "My.Tool @ https://example.com/my_tool-1.0-py3-none-any.whl#sha256=x",
+                f"My.Tool @ https://example.com/my_tool-1.0-py3-none-any.whl#sha256={SHA}",
                 "My.Tool",
-                "https://example.com/my_tool-1.0-py3-none-any.whl#sha256=x",
+                "https://example.com/my_tool-1.0-py3-none-any.whl",
                 True,
             ),
             (
@@ -182,6 +187,123 @@ class TestParseSpec:
     def test_invalid(self) -> None:
         with pytest.raises(ToolError, match="Invalid package specification 'a b!'"):
             parse_spec("a b!")
+
+
+class TestHash:
+    @pytest.mark.parametrize(
+        "fragment", ["md5=abc", "sha256=abc", f"sha256={'g' * 64}", "sha256"]
+    )
+    def test_unsupported(self, fragment: str) -> None:
+        with pytest.raises(ToolError, match="Unsupported hash in the URL fragment"):
+            parse_spec(f"https://example.com/tool-1.0-py3-none-any.whl#{fragment}")
+
+    def test_parsed(self) -> None:
+        wheel = parse_spec(
+            f"https://example.com/tool-1.0-py3-none-any.whl#sha256={SHA.upper()}"
+        ).wheel
+        assert wheel is not None
+        assert wheel.sha256 == SHA
+        assert wheel.source == "https://example.com/tool-1.0-py3-none-any.whl"
+
+    def test_verified(self, tmp_path: Path) -> None:
+        source = tmp_path / "wheels" / "tool-1.0-py3-none-any.whl"
+        source.parent.mkdir()
+        source.write_bytes(b"wheel")
+        digest = hashlib.sha256(b"wheel").hexdigest()
+        spec = parse_spec(f"{source.as_uri()}#sha256={digest}")
+
+        request = tool_request(spec, (), None, tmp_path)
+        assert request.wheel_sha256 == digest
+
+        wrong = parse_spec(f"{source.as_uri()}#sha256={SHA}")
+        with pytest.raises(ToolError, match=f"is {digest}, but {SHA} was expected"):
+            tool_request(wrong, (), None, tmp_path)
+
+
+class TestDownload:
+    """Download rules, with a mock transport instead of a network"""
+
+    @staticmethod
+    def transport(
+        responses: dict[str, httpx2.Response], seen: list[str]
+    ) -> httpx2.MockTransport:
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            seen.append(str(request.url))
+            return responses[str(request.url)]
+
+        return httpx2.MockTransport(handler)
+
+    def test_redirect(self, tmp_path: Path) -> None:
+        seen: list[str] = []
+        responses = {
+            "https://a.example/w.whl": httpx2.Response(
+                302, headers={"Location": "https://b.example/w.whl"}
+            ),
+            "https://b.example/w.whl": httpx2.Response(200, content=b"wheel"),
+        }
+        target = tmp_path / "w.whl"
+        download("https://a.example/w.whl", target, self.transport(responses, seen))
+        assert target.read_bytes() == b"wheel"
+        assert seen == list(responses)
+
+    def test_refuse_https_to_http(self, tmp_path: Path) -> None:
+        seen: list[str] = []
+        responses = {
+            "https://a.example/w.whl": httpx2.Response(
+                302, headers={"Location": "http://b.example/w.whl"}
+            ),
+        }
+        with pytest.raises(ToolError, match="from https to insecure http://b.example"):
+            download(
+                "https://a.example/w.whl",
+                tmp_path / "w.whl",
+                self.transport(responses, seen),
+            )
+        # the insecure request was never sent
+        assert seen == ["https://a.example/w.whl"]
+
+    def test_http_to_http(self, tmp_path: Path) -> None:
+        seen: list[str] = []
+        responses = {
+            "http://a.example/w.whl": httpx2.Response(
+                301, headers={"Location": "http://b.example/w.whl"}
+            ),
+            "http://b.example/w.whl": httpx2.Response(200, content=b"wheel"),
+        }
+        target = tmp_path / "w.whl"
+        download("http://a.example/w.whl", target, self.transport(responses, seen))
+        assert target.read_bytes() == b"wheel"
+
+    def test_http_error(self, tmp_path: Path) -> None:
+        responses = {"https://a.example/w.whl": httpx2.Response(403)}
+        with pytest.raises(ToolError, match="Can not download .*403 Forbidden"):
+            download(
+                "https://a.example/w.whl",
+                tmp_path / "w.whl",
+                self.transport(responses, []),
+            )
+
+    @pytest.mark.parametrize(
+        ("url", "warned"),
+        [
+            ("http://a.example/tool-1.0-py3-none-any.whl", True),
+            (f"http://a.example/tool-1.0-py3-none-any.whl#sha256={SHA}", False),
+            ("https://a.example/tool-1.0-py3-none-any.whl", False),
+        ],
+    )
+    def test_warn_plain_http(
+        self,
+        url: str,
+        warned: bool,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(uvrev.tool, "download", lambda *_: None)
+        wheel = parse_spec(url).wheel
+        assert wheel is not None
+        fetch_wheel(wheel, tmp_path)
+        assert ("integrity is not verified" in capsys.readouterr().err) is warned
 
 
 class TestFetchWheel:
