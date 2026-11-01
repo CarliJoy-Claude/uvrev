@@ -226,6 +226,33 @@ class TestUpgradePython:
         assert status == ""
         assert python_version(project).startswith(f"{pinned(project)}.")
 
+    def test_restore_unavailable_version(
+        self, project: UVRevProject, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Restoring a revision whose Python is not available changes nothing"""
+        current = pinned(project)
+        # revision 1 pins a Python version that does not exist
+        project.python_version_path.write_text("3.99\n")
+        commit_without_revision(project, "--all")
+        git("tag", "-m", "rev 1", "--annotate", "rev_1", project=project)
+        # revision 2 is the current state again
+        project.python_version_path.write_text(f"{current}\n")
+        commit_without_revision(project, "--all")
+        git("tag", "-m", "rev 2", "--annotate", "rev_2", project=project)
+        python_before = python_version(project)
+        monkeypatch.setenv("UV_PYTHON_DOWNLOADS", "never")
+
+        result = invoke("restore", "1", "--json")
+
+        assert result.exit_code == 1
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["status"] == "error"
+        assert report["revision"] == 2
+        status = git("status", "--porcelain", project=project, capture_output=True)
+        assert status == ""
+        assert pinned(project) == current
+        assert python_version(project) == python_before
+
     def test_upgrade_and_restore(self, project: UVRevProject) -> None:
         old_pinned = pinned(project)
         version = other_python(old_pinned)

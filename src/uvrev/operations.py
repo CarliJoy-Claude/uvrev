@@ -285,11 +285,36 @@ def restore_revision(project: UVRevProject, rev_num: Revision) -> RevisionChange
     )
     git("checkout", tag_name, "--", *restored, project=project)
 
-    # Run uv sync
-    uv("sync", "--locked", project=project)
+    # Install the restored state, this recreates the virtual environment if the
+    # Python version changed. Only then the used interpreter can be compared.
+    sync_or_reset(project, "--locked")
 
     # Create new revision for the restore
     return create_revision(project, f"Restored to revision {rev_num}")
+
+
+def sync_or_reset(project: UVRevProject, *args: str) -> None:
+    """Run ``uv sync``, on failure reset the files to the last revision.
+
+    Used after the files were changed (restore, Python version change), so a
+    failure (e.g. the Python version is not available) leaves no state behind
+    that does not match the virtual environment, which uv did not change.
+
+    Args:
+        project: Project to sync.
+        *args: Additional arguments for ``uv sync``.
+    """
+    try:
+        uv("sync", *args, project=project)
+    except SubprocessFailure:
+        changed = (
+            project.pyproject_path,
+            project.python_version_path,
+            project.lock_path,
+        )
+        reset = committed_files(project, "HEAD", changed)
+        git("checkout", "HEAD", "--", *reset, project=project)
+        raise
 
 
 def list_installed_packages(
@@ -467,18 +492,7 @@ def upgrade_python(project: UVRevProject, version: str) -> RevisionChange:
     data.setdefault("project", {})["requires-python"] = f">={version}"
     write_pyproject(project, data)
     project.python_version_path.write_text(f"{version}\n")
-    try:
-        uv("sync", project=project)
-    except SubprocessFailure:
-        # reset to the last revision, the virtual environment was not changed
-        changed = (
-            project.pyproject_path,
-            project.python_version_path,
-            project.lock_path,
-        )
-        restore = committed_files(project, "HEAD", changed)
-        git("checkout", "HEAD", "--", *restore, project=project)
-        raise
+    sync_or_reset(project)
 
     return create_revision(project, python_change_message(old, version))
 

@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CI tests the built package instead of an editable install of the source tree (`UV_NO_EDITABLE`).
   Coverage measures the package `uvrev` and maps installed files back to `src/uvrev`, doctests run with `--pyargs uvrev`.
 - `uvrev restore` restores the pinned Python version (`.python-version`) as well.
+  The virtual environment is recreated before the used interpreter is recorded.
+  If uv fails (e.g. the Python version of that revision is not available), the files are reset to the last revision.
 - `UV_PYTHON` is no longer passed to uv, so an environment always uses the version pinned in `.python-version`
   instead of being recreated with another interpreter.
 - `uvrev env create` without `--python` lets uv choose the interpreter instead of using `UV_PYTHON` or `3.12`.
