@@ -60,4 +60,5 @@ class SubprocessFailure(click.ClickException):
     def __init__(self, error: subprocess.CalledProcessError) -> None:
         if isinstance(error.cmd, tuple):  # pragma: no branch
             error.cmd = shlex.join(error.cmd)
+        self.error = error
         super().__init__(str(error))

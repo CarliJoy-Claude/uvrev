@@ -1,6 +1,7 @@
 import os
 import shlex
 import subprocess
+from collections.abc import Mapping
 from functools import cache
 from pathlib import Path
 from typing import Literal, overload
@@ -104,3 +105,55 @@ def uv(*args: str, project: UVRevProject, keep_stdout: bool = False) -> None:
         )
     except subprocess.CalledProcessError as e:
         raise SubprocessFailure(e) from e
+
+
+def uv_tool(
+    *args: str,
+    env: Mapping[str, str],
+    stdin: str | None = None,
+    capture_stdout: bool = False,
+    capture_stderr: bool = False,
+) -> str:
+    """
+    Execute uv command for ``uvrev tool``, which is not bound to a project
+
+    Args:
+        *args: UV command arguments
+        env: Complete environment of the uv process
+        stdin: Text given to uv on stdin
+        capture_stdout: If True, capture and return stdout, otherwise write to stderr
+        capture_stderr: If True, capture stderr, it is still shown after uv finished
+            and given in the SubprocessFailure, so the caller can inspect it
+
+    Returns:
+        Command stdout if capture_stdout=True, otherwise an empty string
+
+    Raises:
+        SubprocessFailure: If uv fails
+    """
+    cmd = ("uv", *args)
+    show_cmd(cmd)
+    stdout: int = STDERR_FD
+    if capture_stdout:
+        stdout = subprocess.PIPE
+    stderr: int | None = None
+    if capture_stderr:
+        stderr = subprocess.PIPE
+    result = subprocess.run(
+        cmd,
+        env=dict(env),
+        input=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        text=True,
+        check=False,
+    )
+    if capture_stderr:
+        click.echo(result.stderr, err=True, nl=False)
+    if result.returncode != 0:
+        raise SubprocessFailure(
+            subprocess.CalledProcessError(
+                result.returncode, cmd, result.stdout, result.stderr
+            )
+        )
+    return result.stdout or ""
