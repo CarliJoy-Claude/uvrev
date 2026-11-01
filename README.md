@@ -89,15 +89,15 @@ uvrev add pandas numpy --json
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "success",
   "command": "add",
   "arguments": ["pandas", "numpy"],
   "revision": 42,
   "previous_revision": 41,
-  "changes": {"added": ["numpy", "pandas", "pytz"], "updated": ["python-dateutil"], "removed": []},
+  "changes": {"added": ["numpy", "pandas", "pytz"], "updated": ["python-dateutil"], "downgraded": [], "removed": []},
   "all_changed_packages": ["numpy", "pandas", "python-dateutil", "pytz"],
-  "dependency_changes": {"added": ["numpy", "pandas"], "updated": [], "removed": []},
+  "dependency_changes": {"added": ["numpy", "pandas"], "updated": [], "downgraded": [], "removed": []},
   "all_changed_dependencies": ["numpy", "pandas"],
   "versions": {
     "packages": {
@@ -118,15 +118,15 @@ uvrev add pandas numpy --json
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_version` | `integer` | Version of this format, currently `1`. |
+| `schema_version` | `integer` | Version of this format, currently `2`. |
 | `status` | `string` | `"success"` or `"error"`. |
 | `command` | `string` | The executed subcommand. |
 | `arguments` | `array[string]` | The arguments given to the subcommand. |
 | `revision` | `integer \| null` | Current revision after the command (unchanged if nothing changed). `null` only if it could not be determined. |
 | `previous_revision` | `integer \| null` | Revision before the command. A new revision was created if it differs from `revision`. |
-| `changes` | `object` | Changed packages (`added`, `updated`, `removed`), including transitive ones. Taken from `uv.lock`, for `sync` from the installed packages. `updated` contains up- and downgrades. |
+| `changes` | `object` | Changed packages (`added`, `updated`, `downgraded`, `removed`), including transitive ones. Taken from `uv.lock`, for `sync` from the installed packages. `updated` contains the upgrades, `downgraded` the packages whose version decreased. Every package is in one list only. |
 | `all_changed_packages` | `array[string]` | All names in `changes`. |
-| `dependency_changes` | `object` | Changed dependencies in `pyproject.toml` (what was requested, e.g. with `uvrev add`), same structure as `changes`. |
+| `dependency_changes` | `object` | Changed dependencies in `pyproject.toml` (what was requested, e.g. with `uvrev add`), same structure as `changes`. Constraints can not be compared, so a changed one is always in `updated` and `downgraded` is always empty. |
 | `all_changed_dependencies` | `array[string]` | All names in `dependency_changes`. |
 | `versions.packages` | `object` | For every changed package the `old` and `new` version. `null` means absent (added or removed). |
 | `versions.dependencies` | `object` | For every changed dependency the `old` and `new` specifier. `""` means no version constraint, `null` means absent. |

@@ -10,7 +10,7 @@ from packaging.version import Version
 from .differ import Changes, Diff, Names, VersionChange
 from .types import Revision
 
-SCHEMA_VERSION: Final[int] = 1
+SCHEMA_VERSION: Final[int] = 2
 
 
 @dataclass(frozen=True)
@@ -149,7 +149,7 @@ class Report:
 
         >>> print(Report.from_error("sync", (), None, "boom").to_json())
         {
-          "schema_version": 1,
+          "schema_version": 2,
           "status": "error",
           "command": "sync",
           "arguments": [],
@@ -158,12 +158,14 @@ class Report:
           "changes": {
             "added": [],
             "updated": [],
+            "downgraded": [],
             "removed": []
           },
           "all_changed_packages": [],
           "dependency_changes": {
             "added": [],
             "updated": [],
+            "downgraded": [],
             "removed": []
           },
           "all_changed_dependencies": [],

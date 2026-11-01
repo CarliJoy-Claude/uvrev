@@ -208,6 +208,7 @@ class TestDiff:
         assert diff.changes() == Changes(
             added=(NormalizedName("scipy"),),
             updated=(NormalizedName("pandas"),),
+            downgraded=(),
             removed=(NormalizedName("numpy"),),
         )
         assert diff.all_changed == ("numpy", "pandas", "scipy")
@@ -236,7 +237,9 @@ class TestDiff:
         diff: Diff[Version] = Diff()
 
         assert not diff
-        assert diff.changes() == Changes(added=(), updated=(), removed=())
+        assert diff.changes() == Changes(
+            added=(), updated=(), downgraded=(), removed=()
+        )
         assert diff.all_changed == ()
         assert diff.versions() == {}
 
@@ -262,6 +265,13 @@ class TestDowngrade:
         assert diff.downgraded == ("pandas",)
         assert diff.upgraded == ("numpy",)
         assert diff.updated == ("numpy", "pandas")
+        # in the report every name is in one group only
+        assert diff.changes() == Changes(
+            added=(),
+            updated=(NormalizedName("numpy"),),
+            downgraded=(NormalizedName("pandas"),),
+            removed=(),
+        )
         assert diff.lines() == (
             "    ^numpy==1.0 → numpy==2.0",
             "    vpandas==2.0 → pandas==1.0",

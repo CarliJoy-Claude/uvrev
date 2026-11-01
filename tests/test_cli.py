@@ -108,7 +108,7 @@ def sample_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
 def parse_report(result: Result) -> dict[str, Any]:
     """Parse the JSON report, ensuring nothing else was written to stdout"""
     report: dict[str, Any] = json.loads(result.stdout)
-    assert report["schema_version"] == 1
+    assert report["schema_version"] == 2
     # the flat list is the union of all detailed changes
     for changes, all_changed in (
         ("changes", "all_changed_packages"),
@@ -121,7 +121,12 @@ def parse_report(result: Result) -> dict[str, Any]:
     return report
 
 
-NO_CHANGES: dict[str, list[str]] = {"added": [], "updated": [], "removed": []}
+NO_CHANGES: dict[str, list[str]] = {
+    "added": [],
+    "updated": [],
+    "downgraded": [],
+    "removed": [],
+}
 
 
 class TestCLIDefinition:
@@ -355,6 +360,7 @@ class TestSync:
         assert report["changes"] == {
             "added": ["peppercorn", "sampleproject"],
             "updated": [],
+            "downgraded": [],
             "removed": [],
         }
         assert report["all_changed_packages"] == ["peppercorn", "sampleproject"]
@@ -513,6 +519,7 @@ class TestUpgrade:
         assert report["changes"] == {
             "added": [],
             "updated": ["peppercorn", "sampleproject"],
+            "downgraded": [],
             "removed": [],
         }
         assert report["versions"]["packages"]["sampleproject"]["old"] == "3.0.0"
@@ -527,6 +534,30 @@ class TestUpgrade:
         report = parse_report(result)
         assert report["revision"] == report["previous_revision"] == 2
         assert report["all_changed_packages"] == []
+
+    def test_downgrade_json(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """Pinning an older version reports it as downgraded"""
+        assert invoke("upgrade").exit_code == 0
+
+        result = invoke("add", "sampleproject==3.0.0", "--json")
+
+        assert result.exit_code == 0, result.output
+        report = parse_report(result)
+        assert report["changes"]["downgraded"] == ["sampleproject"]
+        assert "sampleproject" not in report["changes"]["updated"]
+        assert report["versions"]["packages"]["sampleproject"]["new"] == "3.0.0"
+        # a changed constraint can not be a downgrade
+        assert report["dependency_changes"] == {
+            "added": [],
+            "updated": ["sampleproject"],
+            "downgraded": [],
+            "removed": [],
+        }
+        history = show_history(upgradeable_project)
+        assert "vsampleproject==" in history
+        assert "→ sampleproject==3.0.0" in history
 
 
 class TestCliIntegration:
@@ -657,6 +688,7 @@ class TestCliIntegration:
         assert report["dependency_changes"] == {
             "added": ["peppercorn"],
             "updated": [],
+            "downgraded": [],
             "removed": [],
         }
         assert report["versions"]["dependencies"] == {
