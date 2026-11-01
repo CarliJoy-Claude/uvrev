@@ -113,6 +113,34 @@ class Diff[T: DiffValue]:
         )
 
     @property
+    def downgraded(self) -> Names:
+        """Updated names whose version decreased.
+
+        Only versions (``uv.lock``) can be compared, a changed specifier
+        (``pyproject.toml``) is never a downgrade.
+
+        >>> diff = Diff(
+        ...     {'a': Version('2.0'), 'b': Version('1.0'), 'c': SpecifierSet('>=2')},
+        ...     {'a': Version('1.0'), 'b': Version('2.0'), 'c': SpecifierSet('>=1')},
+        ... )
+        >>> diff.downgraded, diff.upgraded, diff.updated
+        (('a',), ('b', 'c'), ('a', 'b', 'c'))
+        """
+        return tuple(
+            pkg
+            for pkg in self.updated
+            if isinstance(old := self.old[pkg], Version)
+            and isinstance(new := self.new[pkg], Version)
+            and new < old
+        )
+
+    @property
+    def upgraded(self) -> Names:
+        """Updated names that were not downgraded"""
+        downgraded = set(self.downgraded)
+        return tuple(pkg for pkg in self.updated if pkg not in downgraded)
+
+    @property
     def all_changed(self) -> Names:
         return tuple(sorted((*self.added, *self.updated, *self.removed)))
 
@@ -131,16 +159,27 @@ class Diff[T: DiffValue]:
                 -numpy
                 ^pandas>=1.0 → pandas>=2.0
 
+            Downgraded versions are marked with ``v``:
+
+            >>> old = {'pandas': Version('2.0'), 'numpy': Version('1.0')}
+            >>> new = {'pandas': Version('1.0'), 'numpy': Version('2.0')}
+            >>> for line in Diff(old, new).lines():
+            ...     print(line)
+                ^numpy==1.0 → numpy==2.0
+                vpandas==2.0 → pandas==1.0
+
             >>> Diff({'pandas': '>=1.0'}, {'pandas': '>=1.0'}).lines()
             ()
         """
         changes = [f"    -{pkg}{version2str(self.old[pkg])}" for pkg in self.removed]
         changes += [f"    +{pkg}{version2str(self.new[pkg])}" for pkg in self.added]
-        changes += [
-            f"    ^{pkg}{version2str(self.old[pkg])} → {pkg}{version2str(self.new[pkg])}"
-            for pkg in self.updated
-        ]
+        changes += [self._update_line("^", pkg) for pkg in self.upgraded]
+        changes += [self._update_line("v", pkg) for pkg in self.downgraded]
         return tuple(sorted(changes))
+
+    def _update_line(self, marker: str, pkg: NormalizedName) -> str:
+        old, new = version2str(self.old[pkg]), version2str(self.new[pkg])
+        return f"    {marker}{pkg}{old} → {pkg}{new}"
 
     def changes(self) -> Changes:
         """Changed names grouped by kind of change.
@@ -172,42 +211,52 @@ class Diff[T: DiffValue]:
 def create_changelog(
     dependencies: Diff[SpecifierSet | None],
     packages: Diff[Version],
+    python: Diff[Version] | None = None,
 ) -> str:
     """Create a formatted changelog from dependency and lockfile diffs.
 
     Args:
         dependencies: Diff of the dependency constraints (pyproject.toml).
         packages: Diff of the pinned package versions (uv.lock).
+        python: Diff of the Python interpreter version (``python`` -> version).
 
     Returns:
-        Formatted changelog string with Dependencies and Pinned Versions sections.
+        Formatted changelog string with Python, Dependencies and Pinned Versions
+        sections, each only if something changed.
 
     Examples:
         >>> deps = Diff({'pandas': None}, {'pandas': None, 'numpy': None})
         >>> pkgs = Diff(
-        ...     {'pandas': Version('1.0.0')},
-        ...     {'pandas': Version('2.0.0'), 'numpy': Version('1.24.0')},
+        ...     {'pandas': Version('2.0.0'), 'six': Version('1.0')},
+        ...     {'pandas': Version('1.0.0'), 'numpy': Version('1.24.0')},
         ... )
-        >>> print(create_changelog(deps, pkgs))
+        >>> python = Diff({'python': Version('3.12.3')}, {'python': Version('3.14.0')})
+        >>> print(create_changelog(deps, pkgs, python))
         <BLANKLINE>
+          Python:
+            ^python==3.12.3 → python==3.14.0
           Dependencies:
             +numpy
           Pinned Versions:
             +numpy==1.24.0
-            ^pandas==1.0.0 → pandas==2.0.0
+            -six==1.0
+            vpandas==2.0.0 → pandas==1.0.0
         <BLANKLINE>
 
         >>> # No changes case
         >>> print(create_changelog(Diff(), Diff()))
         (no changes)
     """
-    result = ""
-    if deps_diff := dependencies.lines():
-        result = "\n  Dependencies:\n"
-        result += "\n".join(deps_diff)
-    if lock_diff := packages.lines():
-        result += "\n  Pinned Versions:\n"
-        result += "\n".join(lock_diff) + "\n"
+    sections = (
+        ("Python", python or Diff[Version]()),
+        ("Dependencies", dependencies),
+        ("Pinned Versions", packages),
+    )
+    result = "".join(
+        f"\n  {title}:\n" + "\n".join(lines)
+        for title, diff in sections
+        if (lines := diff.lines())
+    )
     if result:
-        return result
+        return result + "\n"
     return "(no changes)"

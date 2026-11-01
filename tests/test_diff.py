@@ -217,10 +217,11 @@ class TestDiff:
             "scipy": VersionChange(old=None, new="1.5"),
         }
 
-    def test_downgrade_is_update(self) -> None:
+    def test_downgrade_is_update_and_downgrade(self) -> None:
         diff = Diff({"pandas": Version("2.0")}, {"pandas": Version("1.0")})  # type: ignore[dict-item]
 
         assert diff.updated == ("pandas",)
+        assert diff.downgraded == ("pandas",)
 
     def test_specifier_none_is_empty_string(self) -> None:
         """An unconstrained dependency is "", an absent one None"""
@@ -247,3 +248,49 @@ class TestDiff:
         old[NormalizedName("numpy")] = Version("1.0")
 
         assert diff.removed == ("pandas",)
+
+
+class TestDowngrade:
+    """Downgraded versions are shown separately from upgrades"""
+
+    def test_downgraded(self) -> None:
+        diff = Diff(
+            {"pandas": Version("2.0"), "numpy": Version("1.0")},  # type: ignore[dict-item]
+            {"pandas": Version("1.0"), "numpy": Version("2.0")},  # type: ignore[dict-item]
+        )
+
+        assert diff.downgraded == ("pandas",)
+        assert diff.upgraded == ("numpy",)
+        assert diff.updated == ("numpy", "pandas")
+        assert diff.lines() == (
+            "    ^numpy==1.0 → numpy==2.0",
+            "    vpandas==2.0 → pandas==1.0",
+        )
+
+    def test_specifiers_are_no_downgrades(self) -> None:
+        """Specifiers can not be compared, so they are always updated"""
+        diff = Diff(
+            {"pandas": SpecifierSet(">=2"), "numpy": None},  # type: ignore[dict-item]
+            {"pandas": SpecifierSet(">=1"), "numpy": SpecifierSet(">=1")},  # type: ignore[dict-item]
+        )
+
+        assert diff.downgraded == ()
+        assert diff.upgraded == ("numpy", "pandas")
+
+    def test_changelog(self) -> None:
+        changelog = create_changelog(
+            Diff(),
+            Diff({"pandas": Version("2.0")}, {"pandas": Version("1.0")}),  # type: ignore[dict-item]
+        )
+
+        assert "vpandas==2.0 → pandas==1.0" in changelog
+        assert "^" not in changelog
+
+    def test_changelog_python(self) -> None:
+        changelog = create_changelog(
+            Diff(),
+            Diff(),
+            Diff({"python": Version("3.12.3")}, {"python": Version("3.12.9")}),  # type: ignore[dict-item]
+        )
+
+        assert changelog == "\n  Python:\n    ^python==3.12.3 → python==3.12.9\n"
