@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.3] (2026-11-01)
 
 ### Added
 
@@ -12,31 +12,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   embedded in the wheel by `hatch-uv-lock`. See the [README](README.md#running-tools-with-locked-dependencies).
   The wheel comes from the package index or from a local path or URL.
   A `#sha256=<hex>` fragment in the URL is verified, downloads never go from `https` to `http`.
-- Releases are signed with Sigstore and uploaded with [PEP 740](https://peps.python.org/pep-0740/) attestations,
-  so PyPI shows their provenance.
-  The signing tool is locked in the new `attestations` dependency group.
 - `uvrev upgrade-python <major.minor>` changes the Python version of an environment (e.g. `3.12` to `3.14`).
   It pins the version in `.python-version`, sets `requires-python`, recreates the virtual environment and updates `uv.lock`.
   If uv fails (e.g. the version is not available), the files are reset to the last revision.
+  See the [README](README.md#python-version).
 - The exact version of the Python interpreter is recorded in `.python-version.lock` and shown in the changelog of a revision (`Python:` section).
   A changed interpreter (e.g. a patch update of a uv managed Python) is recorded with the next revision.
   Existing environments get the file with their next revision.
 - `python` field in the JSON report with the old and new interpreter version, if it changed.
 - `downgraded` list in `changes` and `dependency_changes` of the JSON report.
+- Releases are signed with Sigstore and uploaded with [PEP 740](https://peps.python.org/pep-0740/) attestations,
+  so PyPI shows their provenance.
+  The signing tool is locked in the new `attestations` dependency group.
 
 ### Changed
 
-- CI fails if `uv.lock` is not up to date with `pyproject.toml` (`UV_LOCKED` instead of `UV_FROZEN`).
-- More ruff rules are enabled, among them all security related ones (`S`, `ASYNC`, `BLE`, `DTZ`, `G`, `LOG`, `PGH`, `T10`, `YTT`) and `RUF`.
-- CI tests the built package instead of an editable install of the source tree (`UV_NO_EDITABLE`).
-  Coverage measures the package `uvrev` and maps installed files back to `src/uvrev`, doctests run with `--pyargs uvrev`.
-- JSON report `schema_version` 2: `updated` contains only upgrades, downgraded packages are listed in `downgraded` instead.
+- **Breaking:** JSON report `schema_version` 2: `updated` contains only upgrades,
+  downgraded packages are listed in `downgraded` instead.
 - `uvrev restore` restores the pinned Python version (`.python-version`) as well.
   The virtual environment is recreated before the used interpreter is recorded.
   If uv fails (e.g. the Python version of that revision is not available), the files are reset to the last revision.
 - `UV_PYTHON` is no longer passed to uv, so an environment always uses the version pinned in `.python-version`
   instead of being recreated with another interpreter.
 - `uvrev env create` without `--python` lets uv choose the interpreter instead of using `UV_PYTHON` or `3.12`.
+- CI fails if `uv.lock` is not up to date with `pyproject.toml` (`UV_LOCKED` instead of `UV_FROZEN`).
+- CI tests the built package instead of an editable install of the source tree (`UV_NO_EDITABLE`).
+  Coverage measures the package `uvrev` and maps installed files back to `src/uvrev`, doctests run with `--pyargs uvrev`.
+- More ruff rules are enabled, among them all security related ones (`S`, `ASYNC`, `BLE`, `DTZ`, `G`, `LOG`, `PGH`, `T10`, `YTT`) and `RUF`.
 
 ### Fixed
 
@@ -90,7 +92,7 @@ First real release.
 - `uvrev history` shows the revisions and `uvrev restore` goes back to a previous one.
 - `uvrev path` shows the location of an environment.
 
-[Unreleased]: https://gitlab.com/Kound/uvrev/-/compare/0.2...main
+[0.3]: https://gitlab.com/Kound/uvrev/-/compare/0.2...0.3
 [0.2]: https://gitlab.com/Kound/uvrev/-/compare/0.1.4...0.2
 [0.1.4]: https://gitlab.com/Kound/uvrev/-/compare/0.1.3...0.1.4
 [0.1.3]: https://gitlab.com/Kound/uvrev/-/tags/0.1.3
