@@ -99,3 +99,23 @@ def parse_uv_lock_packages(toml_content: str) -> Mapping[NormalizedName, Version
         for pkg in data.get("package", ())
         if "name" in pkg and "version" in pkg
     }
+
+
+def parse_python_lock(content: str) -> Mapping[NormalizedName, Version]:
+    """Parse the Python version lock file (contains only the exact version).
+
+    Args:
+        content: File content as string.
+
+    Returns:
+        Mapping of ``python`` to the interpreter version, empty if not recorded.
+
+    Examples:
+        >>> parse_python_lock("3.12.3\\n")
+        {'python': <Version('3.12.3')>}
+        >>> parse_python_lock("")
+        {}
+    """
+    if not (version := content.strip()):
+        return {}
+    return {canonicalize_name("python"): Version(version)}

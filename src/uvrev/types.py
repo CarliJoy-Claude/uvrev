@@ -9,6 +9,8 @@ import click
 from packaging.requirements import Requirement
 from packaging.utils import NormalizedName, canonicalize_name
 
+from . import constants
+
 Revision = NewType("Revision", int)
 
 
@@ -25,6 +27,20 @@ class UVRevProject:
     @property
     def lock_path(self) -> Path:
         return self.project_path / "uv.lock"
+
+    @property
+    def python_version_path(self) -> Path:
+        """Requested Python version (major.minor), used by uv"""
+        return self.project_path / constants.PYTHON_VERSION_FILE
+
+    @property
+    def python_lock_path(self) -> Path:
+        """Exact version of the Python interpreter of the environment"""
+        return self.project_path / constants.PYTHON_VERSION_LOCK_FILE
+
+    @property
+    def venv_path(self) -> Path:
+        return self.project_path / ".venv"
 
     def exists(self) -> bool:
         """

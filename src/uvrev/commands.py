@@ -92,9 +92,11 @@ def uv(*args: str, project: UVRevProject, keep_stdout: bool = False) -> None:
     cmd = ("uv", *args)
     show_cmd(cmd)
     env = os.environ.copy()
-    if "VIRTUAL_ENV" in env:
-        # disable VIRTUAL_ENV warning
-        del env["VIRTUAL_ENV"]
+    # VIRTUAL_ENV: disable warning about an activated environment
+    # UV_PYTHON: the project uses the Python version pinned in .python-version,
+    # otherwise uv would recreate the environment with another interpreter
+    for var in ("VIRTUAL_ENV", "UV_PYTHON"):
+        env.pop(var, None)
     try:
         subprocess.run(
             cmd,

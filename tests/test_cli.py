@@ -89,7 +89,7 @@ def tmp_basedir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def upgradeable_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
     """Create a project with an uv.lock that can be updated"""
     proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
-    operations.create_env(fake_basedir, constants.DEFAULT_ENV, constants.DEFAULT_PYTHON)
+    operations.create_env(fake_basedir, constants.DEFAULT_ENV)
     shutil.copytree(data_dir / "upgradeable", proj.project_path, dirs_exist_ok=True)
     operations.create_revision(proj, "Add sampleproject")
     return proj
@@ -99,7 +99,7 @@ def upgradeable_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
 def sample_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
     """Create a project with a lock file that is not yet installed"""
     proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
-    operations.create_env(fake_basedir, constants.DEFAULT_ENV, constants.DEFAULT_PYTHON)
+    operations.create_env(fake_basedir, constants.DEFAULT_ENV)
     shutil.copytree(data_dir / "sample", proj.project_path, dirs_exist_ok=True)
     operations.create_revision(proj, "Add sampleproject")
     return proj
@@ -245,6 +245,7 @@ class TestEnvCreate:
             "uv.lock",
             ".gitignore",
             ".python-version",
+            ".python-version.lock",
             ".git",
             ".venv",
         }

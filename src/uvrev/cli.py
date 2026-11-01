@@ -12,6 +12,7 @@ from uvrev.exceptions import RevisionNotFoundError, ToolError
 from . import constants
 from .commands import uv
 from .operations import (
+    PYTHON_MINOR_VERSION,
     add_packages,
     create_env,
     get_last_revision_number,
@@ -22,6 +23,7 @@ from .operations import (
     show_history,
     sync_packages,
     upgrade_packages,
+    upgrade_python,
 )
 from .report import Report, RevisionChange
 from .terminal import fatal_error, success, warning
@@ -139,11 +141,10 @@ def env() -> None:
 @click.argument("name", required=False)
 @click.option(
     "--python",
-    default=constants.DEFAULT_PYTHON,
-    show_default=True,
-    help="Python version",
+    default=None,
+    help="Python version, if not given uv chooses its default interpreter",
 )
-def env_create(name: str | None, python: str) -> None:
+def env_create(name: str | None, python: str | None) -> None:
     """Create a new UV project with revision tracking"""
     project_name = name or constants.DEFAULT_ENV
 
@@ -227,6 +228,38 @@ def upgrade(project: UVRevProject, packages: tuple[str, ...], as_json: bool) -> 
         )
     else:
         success(f"Upgraded all packages, created revision {change.revision}")
+
+
+def python_version_callback(
+    _ctx: click.Context | None, _param: click.Parameter | None, value: str
+) -> str:
+    if not PYTHON_MINOR_VERSION.match(value):
+        raise click.BadParameter(
+            f"must be given as major.minor (e.g. 3.14), not {value!r}"
+        )
+    return value
+
+
+@cli.command("upgrade-python")
+@click.argument("version", callback=python_version_callback)
+@env_option
+@json_option
+def upgrade_python_cmd(project: UVRevProject, version: str, as_json: bool) -> None:
+    """Change the Python minor version of the environment
+
+    Pins VERSION in .python-version, sets requires-python to it, recreates the
+    virtual environment and updates the locked packages. Downgrades work as well.
+
+    Examples:
+        uvrev upgrade-python 3.14
+    """
+    change = run_operation(
+        project, (version,), as_json, lambda: upgrade_python(project, version)
+    )
+    if not change.created:
+        success(f"Python {version} is already used.")
+    else:
+        success(f"Changed Python to {version}, created revision {change.revision}")
 
 
 @cli.command("list")

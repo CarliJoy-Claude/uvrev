@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Final, Literal, Self
 
 from packaging.specifiers import SpecifierSet
-from packaging.utils import NormalizedName
+from packaging.utils import NormalizedName, canonicalize_name
 from packaging.version import Version
 
 from .differ import Changes, Diff, Names, VersionChange
@@ -21,6 +21,7 @@ class RevisionChange:
     revision: Revision
     packages: Diff[Version] = field(default_factory=Diff)
     dependencies: Diff[SpecifierSet | None] = field(default_factory=Diff)
+    python: Diff[Version] = field(default_factory=Diff)
 
     @property
     def created(self) -> bool:
@@ -51,6 +52,7 @@ class Report:
     dependency_changes: Changes
     all_changed_dependencies: Names
     versions: Versions
+    python: VersionChange | None
     error_message: str | None
 
     @classmethod
@@ -78,6 +80,8 @@ class Report:
             (('numpy',), ('numpy',))
             >>> report.versions.packages
             {'numpy': VersionChange(old=None, new='2.1.0')}
+            >>> report.python is None
+            True
         """
         return cls(
             schema_version=SCHEMA_VERSION,
@@ -94,6 +98,7 @@ class Report:
                 packages=change.packages.versions(),
                 dependencies=change.dependencies.versions(),
             ),
+            python=change.python.versions().get(canonicalize_name("python")),
             error_message=None,
         )
 
@@ -135,6 +140,7 @@ class Report:
             dependency_changes=no_changes.changes(),
             all_changed_dependencies=(),
             versions=Versions(packages={}, dependencies={}),
+            python=None,
             error_message=error_message,
         )
 
@@ -165,6 +171,7 @@ class Report:
             "packages": {},
             "dependencies": {}
           },
+          "python": null,
           "error_message": "boom"
         }
         """

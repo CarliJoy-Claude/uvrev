@@ -54,7 +54,7 @@ uvrev --help
 - Conda-style revision history showing added, removed, and updated packages
 - Git-based storage with automatic commits and tags
 - Rollback to any previous revision
-- Detailed changelog tracking both dependencies and pinned versions
+- Detailed changelog tracking the Python version, the dependencies and the pinned versions
 
 ---
 
@@ -68,6 +68,7 @@ uvrev --help
 | `uvrev remove`     | Remove packages from the current project |
 | `uvrev sync`       | Sync project dependencies |
 | `uvrev upgrade`    | Upgrade all or the given packages |
+| `uvrev upgrade-python` | Change the Python minor version (e.g. `3.12` to `3.14`) |
 | `uvrev list`       | List installed packages in the current environment |
 | `uvrev history`    | Show revision history with package changes |
 | `uvrev restore`    | Restore project to a specific revision |
@@ -79,7 +80,7 @@ uvrev --help
 
 ## JSON Output
 
-The commands that change an environment (`add`, `remove`, `sync`, `upgrade`, `restore`) accept `--json`.
+The commands that change an environment (`add`, `remove`, `sync`, `upgrade`, `upgrade-python`, `restore`) accept `--json`.
 Then only a JSON report is written to **stdout**; all logs and the output of `uv` and `git` go to **stderr**.
 
 ```bash
@@ -110,6 +111,7 @@ uvrev add pandas numpy --json
       "pandas": {"old": null, "new": ""}
     }
   },
+  "python": null,
   "error_message": null
 }
 ```
@@ -128,6 +130,7 @@ uvrev add pandas numpy --json
 | `all_changed_dependencies` | `array[string]` | All names in `dependency_changes`. |
 | `versions.packages` | `object` | For every changed package the `old` and `new` version. `null` means absent (added or removed). |
 | `versions.dependencies` | `object` | For every changed dependency the `old` and `new` specifier. `""` means no version constraint, `null` means absent. |
+| `python` | `object \| null` | `old` and `new` exact version of the Python interpreter, if it changed. `null` if it did not change. |
 | `error_message` | `string \| null` | The error, if `status` is `"error"`. |
 
 All package names are [normalized](https://packaging.python.org/en/latest/specifications/name-normalization/) and sorted.
@@ -144,6 +147,53 @@ Example usage in Ansible:
   ansible.builtin.set_fact:
     updated_packages: "{{ (uvrev_result.stdout | from_json).all_changed_packages }}"
 ```
+
+---
+
+## Changelog
+
+Every revision lists what changed compared to the previous one:
+
+```text
+(rev 3) Upgraded Python: 3.12 → 3.13
+  Python:
+    ^python==3.12.3 → python==3.13.1
+  Pinned Versions:
+    ^numpy==2.1.0 → numpy==2.2.0
+    vpandas==2.2.3 → pandas==2.2.2
+```
+
+| Marker | Meaning |
+|--------|---------|
+| `+` | added |
+| `-` | removed |
+| `^` | upgraded (or changed constraint in `Dependencies`) |
+| `v` | downgraded (only for `Python` and `Pinned Versions`) |
+
+Constraints in `pyproject.toml` (`Dependencies`) can not be compared, so they are never shown as downgrade.
+
+---
+
+## Python Version
+
+The Python minor version of an environment is pinned in `.python-version` (e.g. `3.12`).
+The exact version of the interpreter (e.g. `3.12.3`) is recorded in `.python-version.lock`.
+The interpreter can change without uvrev, e.g. by a patch update of a uv managed Python.
+Such a change is recorded with the next revision.
+
+Use `uvrev upgrade-python` to change the minor version:
+
+```bash
+uvrev upgrade-python 3.14
+```
+
+It pins the version in `.python-version`, sets `requires-python` to `>=3.14`,
+recreates the virtual environment and updates `uv.lock`.
+Going back to an older version works the same way, `uvrev restore` restores the pinned version as well.
+
+`uvrev env create` pins the version given with `--python`.
+Without it, uv chooses its default interpreter and pins its minor version.
+`UV_PYTHON` is ignored, so an environment always uses the version of its `.python-version`.
 
 ---
 
