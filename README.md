@@ -170,6 +170,8 @@ This mirrors standard Python workflows and avoids implicit global state.
 ```bash
 uvrev tool run mytool --help
 uvrev tool run --from mytool==1.2 --extra fast mytool-cli -v
+uvrev tool run --from ./dist/mytool-1.2-py3-none-any.whl mytool
+uvrev tool run --from "mytool @ https://example.com/mytool-1.2-py3-none-any.whl" mytool
 ```
 
 ```
@@ -177,7 +179,10 @@ uvrev tool run [--from SPEC] [--extra NAME]... [--python PYTHON] [--refresh] COM
 ```
 
 - Without `--from`, `COMMAND` is also the package name.
-  `SPEC` is `name` or `name==version`; without a version the latest one is resolved by uv.
+- `SPEC` is one of:
+  - `name` or `name==version` from the package index; without a version the latest one is resolved by uv.
+  - The path or URL (`http(s)://`, `file://`) of a wheel, or `name @ URL`.
+    Without `--from`, the command is the normalized package name from the wheel filename.
 - `--extra` installs an extra of the package, it can be repeated.
 - `--python` is passed to uv, `--refresh` rebuilds the cached environment.
 - Everything after `COMMAND` is passed to the command unchanged.
@@ -188,6 +193,13 @@ Releases without them are refused, there is no fallback to an unlocked install.
 The dependencies are installed with `uv sync --locked`, so a release whose lock was outdated at build time is refused too.
 Projects with dynamic `dependencies`, `optional-dependencies` or `requires-python` are not supported,
 as uv would need the source tree to build that metadata. A dynamic `version` is fine.
+
+Index releases can not change, so the cached environment of a release is identified by its version.
+A wheel from a path or URL can change with the same version, e.g. after a rebuild.
+So it is identified by its sha256: it is copied (or downloaded) on every run, and a changed wheel gets a new environment.
+URLs are downloaded by uvrev directly, uv's index credentials are not used for them.
+sdists, source directories and VCS URLs are not supported, as they would need a build of the source tree.
+To run a tool from its source tree with its locked dependencies, use `uv sync --locked` there.
 
 uv's normal configuration is used (indexes, credentials), except `UV_FROZEN`, `UV_LOCKED`, `UV_NO_SYNC` and `UV_PROJECT_ENVIRONMENT`, which are ignored.
 The environments are cached in `tools/` of the uvrev cache directory (`platformdirs.user_cache_dir("uvrev")`, can be changed with `UVREV_CACHE`).

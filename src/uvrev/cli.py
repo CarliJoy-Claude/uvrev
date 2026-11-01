@@ -303,7 +303,10 @@ def tool() -> None:
     "from_spec",
     metavar="SPEC",
     default=None,
-    help="Package providing COMMAND: 'name' or 'name==version' (default: COMMAND)",
+    help=(
+        "Package providing COMMAND: 'name', 'name==version', 'name @ URL' or the "
+        "path or URL of a wheel (default: COMMAND)"
+    ),
 )
 @click.option(
     "--extra",
@@ -334,6 +337,7 @@ def tool_run(
     Examples:
         uvrev tool run mytool --help
         uvrev tool run --from mytool==1.2 --extra fast mytool-cli -v
+        uvrev tool run --from ./dist/mytool-1.2-py3-none-any.whl mytool
     """
     try:
         exit_code = run_tool(command, args, from_spec, extras, python, refresh)

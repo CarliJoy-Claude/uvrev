@@ -4,6 +4,10 @@ Wheels built with the hatchling build hook ``hatch-uv-lock`` contain the
 original ``uv.lock`` and ``pyproject.toml`` of the project in
 ``<name>-<version>.dist-info/extra_metadata/``.
 ``uvrev tool run`` installs the dependencies exactly as pinned in that lock.
+
+The wheel comes from the package index (``name`` or ``name==version``) or from
+a local path or URL. Index releases can not change, so their version identifies
+them. Wheels from a path or URL can, so they are identified by their sha256.
 """
 
 import hashlib
@@ -13,18 +17,26 @@ import shutil
 import subprocess
 import tempfile
 import tomllib
+import urllib.request
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from importlib import metadata
 from itertools import chain
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, Final
+from urllib.parse import unquote, urlsplit
+from urllib.request import url2pathname
 
 from filelock import FileLock
 from packaging.requirements import InvalidRequirement, Requirement
-from packaging.utils import NormalizedName, canonicalize_name
+from packaging.utils import (
+    InvalidWheelFilename,
+    NormalizedName,
+    canonicalize_name,
+    parse_wheel_filename,
+)
 from packaging.version import Version
 from platformdirs import user_cache_path
 
@@ -46,7 +58,20 @@ DYNAMIC_NEEDS_SOURCE: Final[tuple[str, ...]] = (
     "requires-python",
 )
 ARCHIVE_SUFFIXES: Final[tuple[str, ...]] = (".whl", ".zip", ".tar.gz", ".tgz")
-SUPPORTED_SPEC: Final[str] = "Give 'name' or 'name==version'"
+SUPPORTED_SPEC: Final[str] = (
+    "Give 'name', 'name==version' or the path or URL of a wheel"
+)
+
+
+@dataclass(frozen=True)
+class WheelLocation:
+    """A wheel given as local path or URL"""
+
+    filename: str
+    version: Version
+    # URL for remote wheels, path for local ones (file:// URLs become paths)
+    source: str
+    remote: bool
 
 
 @dataclass(frozen=True)
@@ -56,6 +81,7 @@ class ToolSpec:
     name: NormalizedName
     version: Version | None
     requested_name: str
+    wheel: WheelLocation | None = None
 
 
 @dataclass(frozen=True)
@@ -66,10 +92,22 @@ class ToolRequest:
     version: Version
     extras: tuple[NormalizedName, ...]
     python: str | None
+    # local snapshot of a wheel from a path or URL, None for the package index
+    wheel: Path | None = None
+    wheel_sha256: str | None = None
+    # path or URL as given, None for the package index
+    origin: str | None = None
 
     @property
     def requirement(self) -> str:
         return f"{self.name}=={self.version}"
+
+    @property
+    def install_source(self) -> str:
+        """What uv installs: the requirement or the wheel snapshot"""
+        if self.wheel is None:
+            return self.requirement
+        return str(self.wheel)
 
     @property
     def python_args(self) -> tuple[str, ...]:
@@ -79,7 +117,8 @@ class ToolRequest:
 
     @property
     def key(self) -> str:
-        """Cache key: the version and a short hash of the extras and python request
+        """Cache key: the version and a short hash of the extras, the python request
+        and the sha256 of a wheel from a path or URL
 
         >>> request = ToolRequest(NormalizedName("a"), Version("1.0"), (), None)
         >>> request.key
@@ -87,8 +126,16 @@ class ToolRequest:
         >>> other = ToolRequest(NormalizedName("a"), Version("1.0"), (), "3.13")
         >>> request.key != other.key
         True
+        >>> wheel = ToolRequest(
+        ...     NormalizedName("a"), Version("1.0"), (), None, wheel_sha256="ab"
+        ... )
+        >>> request.key != wheel.key
+        True
         """
-        payload = json.dumps({"extras": self.extras, "python": self.python})
+        data: dict[str, object] = {"extras": self.extras, "python": self.python}
+        if self.wheel_sha256 is not None:
+            data["wheel_sha256"] = self.wheel_sha256
+        payload = json.dumps(data)
         digest = hashlib.sha256(payload.encode()).hexdigest()[:12]
         return f"{self.version}-{digest}"
 
@@ -107,6 +154,8 @@ class Receipt:
 
     package: str
     version: str
+    source: str
+    wheel_sha256: str | None
     uv_lock_sha256: str
     pyproject_sha256: str
     extras: tuple[str, ...]
@@ -120,14 +169,71 @@ class Receipt:
         os.replace(tmp, directory / RECEIPT_NAME)
 
 
+def is_url_or_path(spec: str) -> bool:
+    """True if the spec is not a requirement but a URL or path
+
+    >>> [is_url_or_path(s) for s in ("tool==1", "./x", "x.whl", "https://x")]
+    [False, True, True, True]
+    """
+    return (
+        "://" in spec
+        or "/" in spec
+        or "\\" in spec
+        or spec.startswith((".", "~"))
+        or spec.lower().endswith(ARCHIVE_SUFFIXES)
+    )
+
+
+def parse_wheel_location(location: str) -> WheelLocation:
+    """Parse the path or URL of a wheel.
+
+    Examples:
+        >>> parse_wheel_location("https://host/My_Tool-1.0-py3-none-any.whl?x=1")
+        WheelLocation(filename='My_Tool-1.0-py3-none-any.whl', version=<Version('1.0')>, source='https://host/My_Tool-1.0-py3-none-any.whl?x=1', remote=True)
+        >>> parse_wheel_location("file:///wheels/tool-2.0-py3-none-any.whl").source
+        '/wheels/tool-2.0-py3-none-any.whl'
+        >>> parse_wheel_location("dist/tool-2.0-py3-none-any.whl").remote
+        False
+    """
+    parts = urlsplit(location)
+    scheme = parts.scheme.lower()
+    if scheme in ("http", "https"):
+        filename = unquote(PurePosixPath(parts.path).name)
+        source = location
+    elif scheme == "file":
+        source = url2pathname(unquote(parts.path))
+        filename = Path(source).name
+    elif "://" in location:
+        raise ToolError(
+            f"Unsupported URL '{location}': only http(s) and file URLs of wheels "
+            "are supported, VCS URLs would need a build of the source tree"
+        )
+    else:
+        source = location
+        filename = Path(location).name
+    if not filename.endswith(".whl"):
+        raise ToolError(
+            f"'{location}' is not a wheel (.whl). sdists and source directories "
+            "would need a build of the source tree. To run a tool from its source "
+            "tree with its locked dependencies, use 'uv sync --locked' there."
+        )
+    try:
+        _, version, _, _ = parse_wheel_filename(filename)
+    except InvalidWheelFilename as e:
+        raise ToolError(f"Invalid wheel filename '{filename}': {e}") from None
+    return WheelLocation(filename, version, source, remote=scheme in ("http", "https"))
+
+
 def parse_spec(spec: str) -> ToolSpec:
-    """Parse ``name`` or ``name==version``.
+    """Parse ``name``, ``name==version``, ``name @ URL`` or the path or URL of a wheel
 
     Examples:
         >>> parse_spec("My_Tool")
-        ToolSpec(name='my-tool', version=None, requested_name='My_Tool')
+        ToolSpec(name='my-tool', version=None, requested_name='My_Tool', wheel=None)
         >>> parse_spec("tool==1.2").version
         <Version('1.2')>
+        >>> parse_spec("./dist/My_Tool-1.2-py3-none-any.whl").requested_name
+        'my-tool'
         >>> parse_spec("tool[a,b]")
         Traceback (most recent call last):
         ...
@@ -135,35 +241,41 @@ def parse_spec(spec: str) -> ToolSpec:
         >>> parse_spec("tool>=1")
         Traceback (most recent call last):
         ...
-        uvrev.exceptions.ToolError: Unsupported package specification 'tool>=1'. Give 'name' or 'name==version'
+        uvrev.exceptions.ToolError: Unsupported package specification 'tool>=1'. Give 'name', 'name==version' or the path or URL of a wheel
     """
-    url_or_path = (
-        "://" in spec
-        or "/" in spec
-        or "\\" in spec
-        or spec.startswith(".")
-        or spec.lower().endswith(ARCHIVE_SUFFIXES)
-    )
-    if not url_or_path:
-        try:
-            requirement = Requirement(spec)
-        except InvalidRequirement as e:
+    try:
+        requirement = Requirement(spec)
+    except InvalidRequirement as e:
+        # paths and URLs are no valid requirements, "name @ URL" is
+        if "@" in spec or not is_url_or_path(spec):
             raise ToolError(
                 f"Invalid package specification '{spec}': {e}. {SUPPORTED_SPEC}"
             ) from None
-        url_or_path = requirement.url is not None
-    if url_or_path:
-        raise ToolError(
-            f"URLs and paths are not supported ('{spec}'): only released wheels "
-            f"from the package index can be run. {SUPPORTED_SPEC}"
-        )
+        wheel = parse_wheel_location(spec)
+        name = canonicalize_name(parse_wheel_filename(wheel.filename)[0])
+        return ToolSpec(name, wheel.version, name, wheel)
+    if requirement.url is None and is_url_or_path(spec):
+        # a wheel filename like tool-1.0-py3-none-any.whl is a valid name
+        wheel = parse_wheel_location(spec)
+        name = canonicalize_name(parse_wheel_filename(wheel.filename)[0])
+        return ToolSpec(name, wheel.version, name, wheel)
     if requirement.extras:
         options = " ".join(f"--extra {e}" for e in sorted(requirement.extras))
         raise ToolError(
             f"Extras in brackets are not supported ('{spec}'), use {options}"
         )
-    specifiers = tuple(requirement.specifier)
     name = canonicalize_name(requirement.name)
+    specifiers = tuple(requirement.specifier)
+
+    if requirement.url is not None and requirement.marker is None:
+        wheel = parse_wheel_location(requirement.url)
+        wheel_name = canonicalize_name(parse_wheel_filename(wheel.filename)[0])
+        if wheel_name != name:
+            raise ToolError(
+                f"The wheel {wheel.filename} is '{wheel_name}', not '{name}'"
+            )
+        return ToolSpec(name, wheel.version, requirement.name, wheel)
+
     if not specifiers and requirement.marker is None:
         return ToolSpec(name, None, requirement.name)
     if (
@@ -174,6 +286,54 @@ def parse_spec(spec: str) -> ToolSpec:
     ):
         raise ToolError(f"Unsupported package specification '{spec}'. {SUPPORTED_SPEC}")
     return ToolSpec(name, Version(specifiers[0].version), requirement.name)
+
+
+def fetch_wheel(wheel: WheelLocation, directory: Path) -> Path:
+    """Copy or download the wheel into the directory.
+
+    The snapshot is hashed and installed, so a wheel that is rebuilt or replaced
+    meanwhile can not lead to an environment that does not match the hash.
+    """
+    target = directory / wheel.filename
+    if wheel.remote:
+        show_cmd(("download", wheel.source))
+        try:
+            with (
+                urllib.request.urlopen(wheel.source) as response,
+                target.open("wb") as file,
+            ):
+                shutil.copyfileobj(response, file)
+        except (OSError, ValueError) as e:
+            raise ToolError(f"Can not download the wheel {wheel.source}: {e}") from None
+    else:
+        try:
+            shutil.copyfile(Path(wheel.source).expanduser(), target)
+        except OSError as e:
+            raise ToolError(f"Can not read the wheel {wheel.source}: {e}") from None
+    return target
+
+
+def tool_request(
+    spec: ToolSpec, extras: Sequence[str], python: str | None, directory: Path
+) -> ToolRequest:
+    """Resolve the version or fetch the wheel (into the directory)"""
+    normalized_extras = normalize_extras(extras)
+    if spec.wheel is not None:
+        wheel = fetch_wheel(spec.wheel, directory)
+        return ToolRequest(
+            spec.name,
+            spec.wheel.version,
+            normalized_extras,
+            python,
+            wheel=wheel,
+            wheel_sha256=hashlib.sha256(wheel.read_bytes()).hexdigest(),
+            origin=spec.wheel.source,
+        )
+    if spec.version is None:
+        version = resolve_version(spec.name, python)
+    else:
+        version = spec.version
+    return ToolRequest(spec.name, version, normalized_extras, python)
 
 
 def parse_resolved_version(output: str, name: NormalizedName) -> Version:
@@ -361,6 +521,7 @@ def has_receipt(directory: Path, request: ToolRequest) -> bool:
         isinstance(data, dict)
         and data.get("package") == request.name
         and data.get("version") == str(request.version)
+        and data.get("wheel_sha256") == request.wheel_sha256
     )
 
 
@@ -408,7 +569,7 @@ def build_environment(directory: Path, request: ToolRequest) -> None:
             "--target",
             target,
             *request.python_args,
-            request.requirement,
+            request.install_source,
             env=env,
         )
         embedded = read_embedded(find_dist_info(Path(target), request.name))
@@ -428,7 +589,7 @@ def build_environment(directory: Path, request: ToolRequest) -> None:
         "--no-deps",
         "--only-binary",
         request.name,
-        request.requirement,
+        request.install_source,
         env=env,
     )
     uv_tool("pip", "check", "--python", str(venv), env=env)
@@ -436,6 +597,8 @@ def build_environment(directory: Path, request: ToolRequest) -> None:
     Receipt(
         package=request.name,
         version=str(request.version),
+        source=request.origin or request.requirement,
+        wheel_sha256=request.wheel_sha256,
         uv_lock_sha256=hashlib.sha256(embedded.lock).hexdigest(),
         pyproject_sha256=hashlib.sha256(embedded.pyproject).hexdigest(),
         extras=request.extras,
@@ -518,13 +681,9 @@ def run_tool(
             f"COMMAND must be the name of a console script, not '{command}'"
         )
 
-    if spec.version is None:
-        version = resolve_version(spec.name, python)
-    else:
-        version = spec.version
-    request = ToolRequest(spec.name, version, normalize_extras(extras), python)
-
-    venv = ensure_environment(request, refresh) / ".venv"
+    with tempfile.TemporaryDirectory(prefix="uvrev-wheel-") as directory:
+        request = tool_request(spec, extras, python, Path(directory))
+        venv = ensure_environment(request, refresh) / ".venv"
     executable = script_path(venv, command)
     if not executable.is_file():
         scripts = console_scripts(venv, request.name)

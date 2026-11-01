@@ -1,6 +1,7 @@
 """Unit tests of uvrev tool, see test_tool_integration.py for real wheels"""
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from uvrev.tool import (
     check_embedded,
     console_scripts,
     ensure_environment,
+    fetch_wheel,
     find_dist_info,
     get_cache_dir,
     has_receipt,
@@ -81,20 +83,79 @@ class TestParseSpec:
         assert parse_spec(spec) == expected
 
     @pytest.mark.parametrize(
-        "spec",
+        ("spec", "requested_name", "source", "remote"),
         [
-            "https://example.com/tool.whl",
-            "git+https://example.com/tool",
-            "tool @ https://example.com/tool.whl",
-            "./tool",
-            "dist/tool-1.0-py3-none-any.whl",
-            "tool-1.0-py3-none-any.whl",
-            "tool-1.0.tar.gz",
-            "C:\\tool",
+            (
+                "https://example.com/My_Tool-1.0-py3-none-any.whl",
+                "my-tool",
+                "https://example.com/My_Tool-1.0-py3-none-any.whl",
+                True,
+            ),
+            (
+                "My.Tool @ https://example.com/my_tool-1.0-py3-none-any.whl#sha256=x",
+                "My.Tool",
+                "https://example.com/my_tool-1.0-py3-none-any.whl#sha256=x",
+                True,
+            ),
+            (
+                "file:///wheels/my_tool-1.0-py3-none-any.whl",
+                "my-tool",
+                "/wheels/my_tool-1.0-py3-none-any.whl",
+                False,
+            ),
+            (
+                "dist/my_tool-1.0-py3-none-any.whl",
+                "my-tool",
+                "dist/my_tool-1.0-py3-none-any.whl",
+                False,
+            ),
+            (
+                "my_tool-1.0-py3-none-any.whl",
+                "my-tool",
+                "my_tool-1.0-py3-none-any.whl",
+                False,
+            ),
+            (
+                "my-tool @ ./dist/my_tool-1.0-py3-none-any.whl",
+                "my-tool",
+                "./dist/my_tool-1.0-py3-none-any.whl",
+                False,
+            ),
         ],
     )
-    def test_url_or_path(self, spec: str) -> None:
-        with pytest.raises(ToolError, match="URLs and paths are not supported"):
+    def test_wheel(
+        self, spec: str, requested_name: str, source: str, remote: bool
+    ) -> None:
+        parsed = parse_spec(spec)
+        assert parsed.name == "my-tool"
+        assert parsed.version == Version("1.0")
+        assert parsed.requested_name == requested_name
+        assert parsed.wheel is not None
+        assert parsed.wheel.filename.lower() == "my_tool-1.0-py3-none-any.whl"
+        assert parsed.wheel.source == source
+        assert parsed.wheel.remote is remote
+
+    @pytest.mark.parametrize(
+        ("spec", "message"),
+        [
+            ("./tool", "is not a wheel"),
+            ("tool-1.0.tar.gz", "is not a wheel"),
+            ("https://example.com/tool-1.0.zip", "is not a wheel"),
+            ("tool @ https://example.com/tool-1.0.tar.gz", "is not a wheel"),
+            ("git+https://example.com/tool", "Unsupported URL"),
+            ("tool @ git+https://example.com/tool", "Unsupported URL"),
+            ("ftp://example.com/tool-1.0-py3-none-any.whl", "Unsupported URL"),
+            ("./tool.whl", "Invalid wheel filename 'tool.whl'"),
+            (
+                "other @ https://example.com/tool-1.0-py3-none-any.whl",
+                "is 'tool', not 'other'",
+            ),
+            ("tool[x] @ https://example.com/tool-1.0-py3-none-any.whl", "--extra x"),
+            ("tool @ ", "Invalid package specification"),
+        ],
+    )
+    def test_not_supported(self, spec: str, message: str) -> None:
+        with pytest.raises(ToolError, match=re.escape(message)):
             parse_spec(spec)
 
     def test_extras(self) -> None:
@@ -111,6 +172,7 @@ class TestParseSpec:
             "tool==1,!=2",
             "tool; python_version > '3'",
             "tool==1; python_version > '3'",
+            "tool @ https://example.com/tool-1.0-py3-none-any.whl ; os_name == 'x'",
         ],
     )
     def test_unsupported_specifier(self, spec: str) -> None:
@@ -120,6 +182,21 @@ class TestParseSpec:
     def test_invalid(self) -> None:
         with pytest.raises(ToolError, match="Invalid package specification 'a b!'"):
             parse_spec("a b!")
+
+
+class TestFetchWheel:
+    def test_missing_file(self, tmp_path: Path) -> None:
+        wheel = parse_spec(str(tmp_path / "tool-1.0-py3-none-any.whl")).wheel
+        assert wheel is not None
+        with pytest.raises(ToolError, match="Can not read the wheel"):
+            fetch_wheel(wheel, tmp_path)
+
+    def test_download_failure(self, tmp_path: Path) -> None:
+        # port 9 (discard) is closed: the connection is refused without network
+        wheel = parse_spec("http://127.0.0.1:9/tool-1.0-py3-none-any.whl").wheel
+        assert wheel is not None
+        with pytest.raises(ToolError, match="Can not download the wheel"):
+            fetch_wheel(wheel, tmp_path)
 
 
 class TestCheckEmbedded:
@@ -322,7 +399,7 @@ class TestRunTool:
     def test_cli_error(self) -> None:
         result = CliRunner().invoke(cli, args=("tool", "run", "./tool"))
         assert result.exit_code == 1
-        assert "❌ URLs and paths are not supported" in result.stderr
+        assert "❌ './tool' is not a wheel (.whl)" in result.stderr
 
     @pytest.mark.parametrize(
         "args", [("tool", "--help"), ("tool", "run", "--help")], ids=" ".join

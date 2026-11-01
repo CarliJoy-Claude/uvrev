@@ -5,12 +5,16 @@ pyproject.toml like hatch-uv-lock does. They are served with UV_FIND_LINKS,
 their dependencies come from PyPI.
 """
 
+import functools
+import hashlib
+import http.server
 import json
 import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Mapping
+import threading
+from collections.abc import Generator, Mapping
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
@@ -184,6 +188,42 @@ def find_links(tmp_path_factory: pytest.TempPathFactory) -> Path:
         hook_body='metadata["version"] = "2.0"',
     )
     return out
+
+
+@pytest.fixture(scope="session")
+def rebuilt_wheel(tmp_path_factory: pytest.TempPathFactory, find_links: Path) -> Path:
+    """uvrev-fx-app 1.0 again, but with idna as additional dependency"""
+    root = tmp_path_factory.mktemp("rebuilt")
+    out = tmp_path_factory.mktemp("rebuilt-wheels")
+    build_wheel(
+        root,
+        out,
+        "uvrev-fx-app",
+        pyproject("uvrev-fx-app", dependencies='dependencies = ["six", "idna"]'),
+    )
+    (wheel,) = out.glob("*.whl")
+    assert wheel.name == app_wheel(find_links).name
+    assert wheel.read_bytes() != app_wheel(find_links).read_bytes()
+    return wheel
+
+
+def app_wheel(find_links: Path) -> Path:
+    (wheel,) = find_links.glob("uvrev_fx_app-*.whl")
+    return wheel
+
+
+@pytest.fixture(scope="session")
+def wheel_server(find_links: Path) -> Generator[str, None, None]:
+    """Serve the fixture wheels over http, returns the base URL"""
+    handler = functools.partial(
+        http.server.SimpleHTTPRequestHandler, directory=str(find_links)
+    )
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+    thread.join()
 
 
 @pytest.fixture(autouse=True)
@@ -442,3 +482,95 @@ def test_killed_during_sync(
     assert result.exit_code == 0, result.output
     assert syncs(uv_calls) == 1
     assert (directory / RECEIPT_NAME).is_file()
+
+
+class TestWheelPathOrUrl:
+    """Wheels from a path or URL are identified by their sha256"""
+
+    @pytest.mark.parametrize("as_uri", [False, True], ids=["path", "file-url"])
+    def test_local_wheel(
+        self,
+        as_uri: bool,
+        find_links: Path,
+        tmp_path: Path,
+        tool_env: Path,
+        capfd: pytest.CaptureFixture[str],
+        uv_calls: list[tuple[str, ...]],
+    ) -> None:
+        wheel = tmp_path / app_wheel(find_links).name
+        shutil.copyfile(app_wheel(find_links), wheel)
+        spec = str(wheel)
+        if as_uri:
+            spec = wheel.as_uri()
+
+        # without --from the command is the package name
+        result = run(spec, "a")
+
+        assert result.exit_code == 0, result.output
+        assert tool_output(capfd)["args"] == ["a"]
+        # no version resolution with the index
+        assert not any(call[:2] == ("pip", "compile") for call in uv_calls)
+        (directory,) = tool_dirs(tool_env, "uvrev-fx-app")
+        receipt = json.loads((directory / RECEIPT_NAME).read_text())
+        assert receipt["source"] == str(wheel)
+        assert receipt["wheel_sha256"] == hashlib.sha256(wheel.read_bytes()).hexdigest()
+
+    def test_rebuilt_wheel(
+        self,
+        find_links: Path,
+        rebuilt_wheel: Path,
+        tmp_path: Path,
+        tool_env: Path,
+        capfd: pytest.CaptureFixture[str],
+        uv_calls: list[tuple[str, ...]],
+    ) -> None:
+        """A wheel rebuilt with the same version gets its own environment"""
+        wheel = tmp_path / app_wheel(find_links).name
+        shutil.copyfile(app_wheel(find_links), wheel)
+        assert run(str(wheel)).exit_code == 0
+        assert tool_output(capfd)["modules"]["idna"] is False
+        assert syncs(uv_calls) == 1
+
+        shutil.copyfile(rebuilt_wheel, wheel)
+        assert run(str(wheel)).exit_code == 0
+        assert tool_output(capfd)["modules"]["idna"] is True
+        assert syncs(uv_calls) == 2
+        assert len(tool_dirs(tool_env, "uvrev-fx-app")) == 2
+
+        # both are cached
+        for source, idna in ((app_wheel(find_links), False), (rebuilt_wheel, True)):
+            shutil.copyfile(source, wheel)
+            assert run(str(wheel)).exit_code == 0
+            assert tool_output(capfd)["modules"]["idna"] is idna
+        assert syncs(uv_calls) == 2
+
+    @pytest.mark.parametrize("named", [False, True], ids=["url", "name-at-url"])
+    def test_url(
+        self,
+        named: bool,
+        find_links: Path,
+        wheel_server: str,
+        tool_env: Path,
+        capfd: pytest.CaptureFixture[str],
+        uv_calls: list[tuple[str, ...]],
+    ) -> None:
+        url = f"{wheel_server}/{app_wheel(find_links).name}"
+        spec = url
+        if named:
+            spec = f"uvrev-fx-app @ {url}"
+
+        for args in (("first",), ("cached",)):
+            result = run("--from", spec, "--extra", "idn", "uvrev-fx-app", *args)
+            assert result.exit_code == 0, result.output
+            output = tool_output(capfd)
+            assert output["args"] == list(args)
+            assert output["modules"]["idna"] is True
+        assert syncs(uv_calls) == 1
+        (directory,) = tool_dirs(tool_env, "uvrev-fx-app")
+        assert json.loads((directory / RECEIPT_NAME).read_text())["source"] == url
+
+    def test_url_not_found(self, wheel_server: str) -> None:
+        result = run(f"{wheel_server}/uvrev_fx_missing-1.0-py3-none-any.whl")
+        assert result.exit_code == 1
+        assert "Can not download the wheel" in result.stderr
+        assert "404" in result.stderr
