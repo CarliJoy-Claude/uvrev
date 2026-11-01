@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `uvrev tool run` runs a tool like `uvx`, but installs its dependencies exactly as pinned in the `uv.lock`
   embedded in the wheel by `hatch-uv-lock`. See the [README](README.md#running-tools-with-locked-dependencies).
   The wheel comes from the package index or from a local path or URL.
+  A `#sha256=<hex>` fragment in the URL is verified, downloads never go from `https` to `http`.
 - Releases are signed with Sigstore and uploaded with [PEP 740](https://peps.python.org/pep-0740/) attestations,
   so PyPI shows their provenance.
   The signing tool is locked in the new `attestations` dependency group.
@@ -18,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - CI fails if `uv.lock` is not up to date with `pyproject.toml` (`UV_LOCKED` instead of `UV_FROZEN`).
+- More ruff rules are enabled, among them all security related ones (`S`, `ASYNC`, `BLE`, `DTZ`, `G`, `LOG`, `PGH`, `T10`, `YTT`) and `RUF`.
 - CI tests the built package instead of an editable install of the source tree (`UV_NO_EDITABLE`).
   Coverage measures the package `uvrev` and maps installed files back to `src/uvrev`, doctests run with `--pyargs uvrev`.
 

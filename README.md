@@ -197,7 +197,10 @@ as uv would need the source tree to build that metadata. A dynamic `version` is 
 Index releases can not change, so the cached environment of a release is identified by its version.
 A wheel from a path or URL can change with the same version, e.g. after a rebuild.
 So it is identified by its sha256: it is copied (or downloaded) on every run, and a changed wheel gets a new environment.
-URLs are downloaded by uvrev directly, uv's index credentials are not used for them.
+URLs are downloaded by uvrev directly with [httpx2](https://github.com/pydantic/httpx2), uv's index credentials are not used for them.
+The download uses the trust store of the OS (or `SSL_CERT_FILE`/`SSL_CERT_DIR`) and timeouts, and an `https` download is never redirected to `http`.
+A `#sha256=<hex>` fragment in a URL is verified, e.g. `https://example.com/mytool-1.2-py3-none-any.whl#sha256=…`.
+Plain `http` URLs without it work, but uvrev warns that the integrity of the wheel is not verified.
 sdists, source directories and VCS URLs are not supported, as they would need a build of the source tree.
 To run a tool from its source tree with its locked dependencies, use `uv sync --locked` there.
 
