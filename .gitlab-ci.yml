@@ -91,7 +91,7 @@ attest:pypi:
       aud: sigstore
   script:
     # pypi-attestations is locked in the "attestations" dependency group
-    - uv run --no-default-groups --no-install-project --group attestations pypi-attestations sign dist/*
+    - uv run --only-group attestations pypi-attestations sign dist/*
   artifacts:
     paths:
       - dist/
