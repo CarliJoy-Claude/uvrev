@@ -7,12 +7,12 @@ stages:
 # Template: https://docs.astral.sh/uv/guides/integration/gitlab/#using-the-uv-image
 # Key points:
 # - Use ghcr.io/astral-sh/uv:<UV_VERSION>-python<UV_PYTHON>-<BASE_LAYER>
-# - Set UV_LINK_MODE=copy for GitLab’s mount behavior
 variables:
   UV_VERSION: "0.13.6"
   BASE_LAYER: "trixie"
-  UV_LINK_MODE: "copy"
-  UV_CACHE_DIR: "${CI_PROJECT_DIR}/.uv-cache"
+  # Use local cache dir so that we can use the GitLab cache.
+  # This way, we can also keep the default "link-mode".
+  UV_CACHE_DIR: '$CI_PROJECT_DIR/.cache/uv'
   # fail if uv.lock is not up to date with pyproject.toml
   UV_LOCKED: "true"
   # test the built package, not the source tree
