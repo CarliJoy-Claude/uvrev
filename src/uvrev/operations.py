@@ -338,18 +338,24 @@ def list_installed_packages(
     )
 
 
-def add_packages(project: UVRevProject, packages: tuple[str, ...]) -> RevisionChange:
+def add_packages(
+    project: UVRevProject, packages: tuple[str, ...], upgrade: bool = False
+) -> RevisionChange:
     """Add packages to project.
 
     Args:
         project: Project to add packages to.
-        packages: Package names to add.
+        packages: Requirements to add.
+        upgrade: Also upgrade all other packages.
 
     Returns:
         Changes compared to the previous revision.
     """
-    uv("add", "--raw", *packages, project=project)
-    return create_revision(project, f"Added: {', '.join(packages)}")
+    uv("add", "--raw", *(("--upgrade",) if upgrade else ()), *packages, project=project)
+    message = f"Added: {', '.join(packages)}"
+    if upgrade:
+        message += "; upgraded all packages"
+    return create_revision(project, message)
 
 
 def remove_packages(project: UVRevProject, packages: tuple[str, ...]) -> RevisionChange:

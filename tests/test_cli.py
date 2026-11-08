@@ -560,6 +560,61 @@ class TestUpgrade:
         assert "→ sampleproject==3.0.0" in history
 
 
+class TestAddUpgrade:
+    def test_add_upgrade_json(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """Adding with --upgrade adds the package and upgrades everything"""
+        result = invoke("add", "--upgrade", "peppercorn", "--json")
+
+        assert result.exit_code == 0
+        assert "Created revision 2" in result.output
+        report = parse_report(result)
+        assert report["command"] == "add"
+        assert report["arguments"] == ["peppercorn"]
+        assert report["options"] == {"upgrade": True}
+        assert report["revision"] == 2
+        assert report["changes"] == {
+            "added": [],
+            "updated": ["peppercorn", "sampleproject"],
+            "downgraded": [],
+            "removed": [],
+        }
+        assert report["dependency_changes"] == {
+            "added": ["peppercorn"],
+            "updated": [],
+            "downgraded": [],
+            "removed": [],
+        }
+
+        history = show_history(upgradeable_project)
+        assert "Added: peppercorn; upgraded all packages" in history
+
+    def test_add_without_upgrade_json(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """Without --upgrade the other packages keep their version"""
+        result = invoke("add", "peppercorn", "--json")
+
+        assert result.exit_code == 0
+        report = parse_report(result)
+        assert report["options"] == {"upgrade": False}
+        assert report["changes"] == NO_CHANGES
+        assert report["all_changed_dependencies"] == ["peppercorn"]
+
+    def test_add_failing_json(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """The error report contains the options as well"""
+        result = invoke("add", "--upgrade", "uvrev-does-not-exist", "--json")
+
+        assert result.exit_code == 1
+        report = parse_report(result)
+        assert report["status"] == "error"
+        assert report["options"] == {"upgrade": True}
+        assert report["revision"] == report["previous_revision"] == 1
+
+
 class TestCliIntegration:
     """
     Integrations of adding/deleting and restoring packages

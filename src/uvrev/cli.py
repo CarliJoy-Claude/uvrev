@@ -1,6 +1,6 @@
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +98,7 @@ def run_operation(
     arguments: tuple[str, ...],
     as_json: bool,
     operation: Callable[[], RevisionChange],
+    options: Mapping[str, bool] | None = None,
 ) -> RevisionChange:
     """Run an operation and print its JSON report if requested.
 
@@ -116,9 +117,11 @@ def run_operation(
             revision: Revision | None = get_last_revision_number(project)
         except click.ClickException:
             revision = None
-        click.echo(Report.from_error(command, arguments, revision, message).to_json())
+        click.echo(
+            Report.from_error(command, arguments, revision, message, options).to_json()
+        )
         fatal_error(message)
-    click.echo(Report.from_change(command, arguments, change).to_json())
+    click.echo(Report.from_change(command, arguments, change, options).to_json())
     return change
 
 
@@ -171,12 +174,30 @@ def env_list() -> None:
 
 @cli.command()
 @click.argument("packages", nargs=-1, required=True)
+@click.option(
+    "--upgrade",
+    "-U",
+    is_flag=True,
+    default=False,
+    help="Also upgrade all other packages (like 'uvrev upgrade')",
+)
 @env_option
 @json_option
-def add(project: UVRevProject, packages: tuple[str, ...], as_json: bool) -> None:
-    """Add packages to the current project"""
+def add(
+    project: UVRevProject, packages: tuple[str, ...], upgrade: bool, as_json: bool
+) -> None:
+    """Add packages to the current project
+
+    Examples:
+        uvrev add pandas              # Add pandas
+        uvrev add --upgrade pandas    # Add pandas and upgrade everything
+    """
     change = run_operation(
-        project, packages, as_json, lambda: add_packages(project, packages)
+        project,
+        packages,
+        as_json,
+        lambda: add_packages(project, packages, upgrade),
+        {"upgrade": upgrade},
     )
     if change.created:
         success(f"Created revision {change.revision}")
