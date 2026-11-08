@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4] (2026-11-08)
+
+### Added
+
+- `uvrev add --upgrade` (`-U`) adds the given packages and upgrades all other packages in one revision,
+  e.g. to make sure some packages are installed while keeping the environment up to date.
+  It runs `uv add --raw --upgrade`.
+- `options` field in the JSON report with the flags of the command, e.g. `{"upgrade": true}`.
+
+### Changed
+
+- `httpx2` is required without a minimum version.
+
 ## [0.3] (2026-11-01)
 
 ### Added
@@ -92,6 +105,7 @@ First real release.
 - `uvrev history` shows the revisions and `uvrev restore` goes back to a previous one.
 - `uvrev path` shows the location of an environment.
 
+[0.4]: https://gitlab.com/Kound/uvrev/-/compare/0.3...0.4
 [0.3]: https://gitlab.com/Kound/uvrev/-/compare/0.2...0.3
 [0.2]: https://gitlab.com/Kound/uvrev/-/compare/0.1.4...0.2
 [0.1.4]: https://gitlab.com/Kound/uvrev/-/compare/0.1.3...0.1.4
