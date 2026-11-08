@@ -44,6 +44,7 @@ class Report:
     status: Literal["success", "error"]
     command: str
     arguments: tuple[str, ...]
+    options: Mapping[str, bool]
     revision: Revision | None
     previous_revision: Revision | None
     changes: Changes
@@ -55,7 +56,11 @@ class Report:
 
     @classmethod
     def from_change(
-        cls, command: str, arguments: tuple[str, ...], change: RevisionChange
+        cls,
+        command: str,
+        arguments: tuple[str, ...],
+        change: RevisionChange,
+        options: Mapping[str, bool] | None = None,
     ) -> Self:
         """Build the report of a successful command.
 
@@ -63,6 +68,7 @@ class Report:
             command: Executed subcommand.
             arguments: Arguments given to the subcommand.
             change: Outcome of the command.
+            options: Flags given to the subcommand, e.g. ``{"upgrade": True}``.
 
         Examples:
             >>> change = RevisionChange(
@@ -78,12 +84,17 @@ class Report:
             (('numpy',), ('numpy',))
             >>> report.versions.packages
             {'numpy': VersionChange(old=None, new='2.1.0')}
+            >>> report.options
+            {}
+            >>> Report.from_change("add", ("numpy",), change, {"upgrade": True}).options
+            {'upgrade': True}
         """
         return cls(
             schema_version=SCHEMA_VERSION,
             status="success",
             command=command,
             arguments=arguments,
+            options=dict(options or {}),
             revision=change.revision,
             previous_revision=change.previous_revision,
             changes=change.packages.changes(),
@@ -104,6 +115,7 @@ class Report:
         arguments: tuple[str, ...],
         revision: Revision | None,
         error_message: str,
+        options: Mapping[str, bool] | None = None,
     ) -> Self:
         """Build the report of a failed command.
 
@@ -112,6 +124,7 @@ class Report:
             arguments: Arguments given to the subcommand.
             revision: Current (unchanged) revision, None if it could not be determined.
             error_message: Error that occurred.
+            options: Flags given to the subcommand, e.g. ``{"upgrade": True}``.
 
         Examples:
             >>> report = Report.from_error("add", ("nope",), Revision(2), "boom")
@@ -128,6 +141,7 @@ class Report:
             status="error",
             command=command,
             arguments=arguments,
+            options=dict(options or {}),
             revision=revision,
             previous_revision=revision,
             changes=no_changes.changes(),
@@ -147,6 +161,7 @@ class Report:
           "status": "error",
           "command": "sync",
           "arguments": [],
+          "options": {},
           "revision": null,
           "previous_revision": null,
           "changes": {

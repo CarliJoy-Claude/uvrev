@@ -13,7 +13,7 @@ from uvrev import constants, operations
 from uvrev.commands import git
 from uvrev.io import read_pyproject
 from uvrev.operations import show_history
-from uvrev.parser import parse_uv_lock_packages
+from uvrev.parser import parse_pyproject_deps, parse_uv_lock_packages
 from uvrev.types import UVRevProject
 
 
@@ -526,6 +526,88 @@ class TestUpgrade:
         report = parse_report(result)
         assert report["revision"] == report["previous_revision"] == 2
         assert report["all_changed_packages"] == []
+
+
+class TestAddUpgrade:
+    def test_add_upgrade_json(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """Adding with --upgrade adds the package and upgrades everything"""
+        result = invoke("add", "--upgrade", "peppercorn", "--json")
+
+        assert result.exit_code == 0
+        assert "Created revision 2" in result.output
+        report = parse_report(result)
+        assert report["command"] == "add"
+        assert report["arguments"] == ["peppercorn"]
+        assert report["options"] == {"upgrade": True}
+        assert report["revision"] == 2
+        assert report["changes"] == {
+            "added": [],
+            "updated": ["peppercorn", "sampleproject"],
+            "removed": [],
+        }
+        assert report["dependency_changes"] == {
+            "added": ["peppercorn"],
+            "updated": [],
+            "removed": [],
+        }
+
+        history = show_history(upgradeable_project)
+        assert "Added: peppercorn; upgraded all packages" in history
+
+    def test_add_without_upgrade_json(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """Without --upgrade the other packages keep their version"""
+        result = invoke("add", "peppercorn", "--json")
+
+        assert result.exit_code == 0
+        report = parse_report(result)
+        assert report["options"] == {"upgrade": False}
+        assert report["changes"] == NO_CHANGES
+        assert report["all_changed_dependencies"] == ["peppercorn"]
+
+    def test_add_replaces_specifier(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """Adding a package without specifier removes the existing one"""
+        assert invoke("add", "sampleproject<4", "peppercorn==0.5").exit_code == 0
+
+        result = invoke("add", "-U", "sampleproject", "Peppercorn", "--json")
+
+        assert result.exit_code == 0
+        report = parse_report(result)
+        assert report["dependency_changes"] == {
+            "added": [],
+            "updated": ["peppercorn", "sampleproject"],
+            "removed": [],
+        }
+        assert report["versions"]["dependencies"] == {
+            "peppercorn": {"old": "==0.5", "new": ""},
+            "sampleproject": {"old": "<4", "new": ""},
+        }
+        assert report["changes"]["updated"] == ["peppercorn", "sampleproject"]
+        deps = parse_pyproject_deps(upgradeable_project.pyproject_path.read_text())
+        assert deps == {"peppercorn": None, "sampleproject": None}
+
+    def test_add_failing_keeps_pyproject(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """If uv fails, the replaced requirements are restored"""
+        assert invoke("add", "sampleproject<4").exit_code == 0
+        before = upgradeable_project.pyproject_path.read_text()
+
+        result = invoke(
+            "add", "--upgrade", "sampleproject", "uvrev-does-not-exist", "--json"
+        )
+
+        assert result.exit_code == 1
+        report = parse_report(result)
+        assert report["status"] == "error"
+        assert report["options"] == {"upgrade": True}
+        assert report["revision"] == report["previous_revision"] == 2
+        assert upgradeable_project.pyproject_path.read_text() == before
 
 
 class TestCliIntegration:

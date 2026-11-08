@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from importlib.metadata import distributions
 from pathlib import Path
 
+from packaging.requirements import InvalidRequirement
 from packaging.utils import NormalizedName, canonicalize_name
 from packaging.version import Version
 
@@ -13,7 +14,7 @@ from .exceptions import RevisionNotFoundError
 from .io import read_pyproject, write_pyproject
 from .parser import parse_pyproject_deps, parse_uv_lock_packages
 from .report import RevisionChange
-from .types import Revision, SubprocessFailure, UVRevProject
+from .types import NormalizedRequirement, Revision, SubprocessFailure, UVRevProject
 
 
 def create_env(base_dir: Path, name: str, python: str) -> UVRevProject:
@@ -211,18 +212,74 @@ def list_installed_packages(
     )
 
 
-def add_packages(project: UVRevProject, packages: tuple[str, ...]) -> RevisionChange:
+def requirement_names(packages: tuple[str, ...]) -> frozenset[NormalizedName]:
+    """Get the normalized names of the given requirements.
+
+    Arguments that are no valid requirement (e.g. paths or URLs) are skipped.
+
+    Examples:
+        >>> sorted(requirement_names(("Pandas>=2", "numpy[extra]", "./local")))
+        ['numpy', 'pandas']
+    """
+    names = set()
+    for pkg in packages:
+        with contextlib.suppress(InvalidRequirement):
+            names.add(NormalizedRequirement(pkg).name)
+    return frozenset(names)
+
+
+def drop_dependencies(project: UVRevProject, names: frozenset[NormalizedName]) -> None:
+    """Remove the given packages from the dependencies in pyproject.toml.
+
+    Args:
+        project: Project to change.
+        names: Normalized names of the packages to remove.
+    """
+    data = read_pyproject(project)
+    dependencies = data.get("project", {}).get("dependencies")
+    if dependencies is None:
+        return
+    keep = [dep for dep in dependencies if NormalizedRequirement(dep).name not in names]
+    if len(keep) != len(dependencies):
+        dependencies.clear()
+        dependencies.extend(keep)
+        write_pyproject(project, data)
+
+
+def add_packages(
+    project: UVRevProject, packages: tuple[str, ...], upgrade: bool = False
+) -> RevisionChange:
     """Add packages to project.
+
+    The packages are added as given: an existing requirement of a package is
+    replaced, so adding ``pandas`` removes a previous ``pandas>=2``.
 
     Args:
         project: Project to add packages to.
-        packages: Package names to add.
+        packages: Requirements to add.
+        upgrade: Also upgrade all other packages.
 
     Returns:
         Changes compared to the previous revision.
     """
-    uv("add", "--raw", *packages, project=project)
-    return create_revision(project, f"Added: {', '.join(packages)}")
+    original_pyproject = project.pyproject_path.read_text()
+    # uv keeps an existing specifier if the package is given without one
+    drop_dependencies(project, requirement_names(packages))
+    try:
+        uv(
+            "add",
+            "--raw",
+            *(("--upgrade",) if upgrade else ()),
+            *packages,
+            project=project,
+        )
+    except SubprocessFailure:
+        project.pyproject_path.write_text(original_pyproject)
+        raise
+    message = f"Added: {', '.join(packages)}"
+    if upgrade:
+        message += "; upgraded all packages"
+    return create_revision(project, message)
 
 
 def remove_packages(project: UVRevProject, packages: tuple[str, ...]) -> RevisionChange:

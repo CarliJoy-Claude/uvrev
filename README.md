@@ -64,7 +64,7 @@ uvrev --help
 |--------------------|-------------|
 | `uvrev env create` | Create a new UV project with revision tracking |
 | `uvrev env list`   | List all UV projects |
-| `uvrev add`        | Add packages to the current project |
+| `uvrev add`        | Add packages to the current project (`--upgrade` also upgrades all others) |
 | `uvrev remove`     | Remove packages from the current project |
 | `uvrev sync`       | Sync project dependencies |
 | `uvrev upgrade`    | Upgrade all or the given packages |
@@ -91,6 +91,7 @@ uvrev add pandas numpy --json
   "status": "success",
   "command": "add",
   "arguments": ["pandas", "numpy"],
+  "options": {"upgrade": false},
   "revision": 42,
   "previous_revision": 41,
   "changes": {"added": ["numpy", "pandas", "pytz"], "updated": ["python-dateutil"], "removed": []},
@@ -119,6 +120,7 @@ uvrev add pandas numpy --json
 | `status` | `string` | `"success"` or `"error"`. |
 | `command` | `string` | The executed subcommand. |
 | `arguments` | `array[string]` | The arguments given to the subcommand. |
+| `options` | `object` | The flags given to the subcommand, e.g. `{"upgrade": true}` for `uvrev add --upgrade`. Empty for commands without flags. |
 | `revision` | `integer \| null` | Current revision after the command (unchanged if nothing changed). `null` only if it could not be determined. |
 | `previous_revision` | `integer \| null` | Revision before the command. A new revision was created if it differs from `revision`. |
 | `changes` | `object` | Changed packages (`added`, `updated`, `removed`), including transitive ones. Taken from `uv.lock`, for `sync` from the installed packages. `updated` contains up- and downgrades. |
@@ -172,6 +174,12 @@ source "$(uvrev path -e myproject)/.venv/bin/activate"
 
 uvrev add pandas numpy
 uvrev add requests
+
+# replace an existing requirement, e.g. "pandas>=2" becomes "pandas"
+uvrev add pandas
+
+# make sure pandas and numpy are installed and upgrade everything
+uvrev add --upgrade pandas numpy
 
 uvrev list
 uvrev history
