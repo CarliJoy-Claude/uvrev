@@ -339,21 +339,23 @@ def list_installed_packages(
 
 
 def add_packages(
-    project: UVRevProject, packages: tuple[str, ...], upgrade: bool = False
+    project: UVRevProject, packages: tuple[str, ...], upgrade_all: bool = False
 ) -> RevisionChange:
     """Add packages to project.
 
     Args:
         project: Project to add packages to.
         packages: Requirements to add.
-        upgrade: Also upgrade all other packages.
+        upgrade_all: Run ``uv sync --upgrade`` after adding the packages.
+            If it fails, the files are reset to the last revision.
 
     Returns:
         Changes compared to the previous revision.
     """
-    uv("add", "--raw", *(("--upgrade",) if upgrade else ()), *packages, project=project)
+    uv("add", "--raw", *packages, project=project)
     message = f"Added: {', '.join(packages)}"
-    if upgrade:
+    if upgrade_all:
+        sync_or_reset(project, "--upgrade")
         message += "; upgraded all packages"
     return create_revision(project, message)
 

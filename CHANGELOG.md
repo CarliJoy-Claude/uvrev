@@ -8,10 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- `uvrev add --upgrade` (`-U`) adds the given packages and upgrades all other packages in one revision,
+- `uvrev add --upgrade-all` adds the given packages and upgrades all packages in one revision,
   e.g. to make sure some packages are installed while keeping the environment up to date.
-  It runs `uv add --raw --upgrade`.
-- `options` field in the JSON report with the flags of the command, e.g. `{"upgrade": true}`.
+  It runs `uv add --raw` followed by `uv sync --upgrade`.
+  If the upgrade fails, the files are reset to the last revision.
+- `options` field in the JSON report with the flags of the command, e.g. `{"upgrade_all": true}`.
 
 ### Changed
 

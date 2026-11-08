@@ -175,29 +175,28 @@ def env_list() -> None:
 @cli.command()
 @click.argument("packages", nargs=-1, required=True)
 @click.option(
-    "--upgrade",
-    "-U",
+    "--upgrade-all",
     is_flag=True,
     default=False,
-    help="Also upgrade all other packages (like 'uvrev upgrade')",
+    help="Run 'uv sync --upgrade' after adding the packages",
 )
 @env_option
 @json_option
 def add(
-    project: UVRevProject, packages: tuple[str, ...], upgrade: bool, as_json: bool
+    project: UVRevProject, packages: tuple[str, ...], upgrade_all: bool, as_json: bool
 ) -> None:
     """Add packages to the current project
 
     Examples:
-        uvrev add pandas              # Add pandas
-        uvrev add --upgrade pandas    # Add pandas and upgrade everything
+        uvrev add pandas                  # Add pandas
+        uvrev add --upgrade-all pandas    # Add pandas and upgrade everything
     """
     change = run_operation(
         project,
         packages,
         as_json,
-        lambda: add_packages(project, packages, upgrade),
-        {"upgrade": upgrade},
+        lambda: add_packages(project, packages, upgrade_all),
+        {"upgrade_all": upgrade_all},
     )
     if change.created:
         success(f"Created revision {change.revision}")

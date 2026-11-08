@@ -70,7 +70,7 @@ class Report:
             command: Executed subcommand.
             arguments: Arguments given to the subcommand.
             change: Outcome of the command.
-            options: Flags given to the subcommand, e.g. ``{"upgrade": True}``.
+            options: Flags given to the subcommand, e.g. ``{"upgrade_all": True}``.
 
         Examples:
             >>> change = RevisionChange(
@@ -90,8 +90,8 @@ class Report:
             True
             >>> report.options
             {}
-            >>> Report.from_change("add", ("numpy",), change, {"upgrade": True}).options
-            {'upgrade': True}
+            >>> Report.from_change("add", ("numpy",), change, {"upgrade_all": True}).options
+            {'upgrade_all': True}
         """
         return cls(
             schema_version=SCHEMA_VERSION,
@@ -129,7 +129,7 @@ class Report:
             arguments: Arguments given to the subcommand.
             revision: Current (unchanged) revision, None if it could not be determined.
             error_message: Error that occurred.
-            options: Flags given to the subcommand, e.g. ``{"upgrade": True}``.
+            options: Flags given to the subcommand, e.g. ``{"upgrade_all": True}``.
 
         Examples:
             >>> report = Report.from_error("add", ("nope",), Revision(2), "boom")
