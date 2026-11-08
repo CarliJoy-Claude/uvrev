@@ -1313,7 +1313,7 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8" },
     { name = "filelock", specifier = ">=3.12" },
-    { name = "httpx2", specifier = ">=2.16" },
+    { name = "httpx2" },
     { name = "packaging", specifier = ">=25.0" },
     { name = "platformdirs", specifier = ">=4" },
     { name = "tomlkit", specifier = ">=0.13" },
