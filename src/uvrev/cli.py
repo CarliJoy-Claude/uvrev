@@ -1,7 +1,7 @@
 import os
 import sys
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +36,7 @@ from .protection import (
 from .report import Option, Report, RevisionChange
 from .settings import Settings, load_settings
 from .terminal import error, fatal_error, success, warning
-from .tool import run_tool
+from .tool import ToolServices, run_tool
 from .types import Revision, SubprocessFailure, UVRevProject
 from .verify import Problem, verify
 
@@ -81,6 +81,8 @@ class Services:
     settings: Settings
     # verify(project, fix) of the venv
     verify: Verifier = verify
+    # services of uvrev tool run
+    tool: ToolServices = field(default_factory=ToolServices)
 
 
 def get_services(ctx: click.Context | None) -> Services:
@@ -678,6 +680,7 @@ def tool_run(
             python,
             refresh,
             get_settings(click.get_current_context()),
+            get_services(click.get_current_context()).tool,
         )
     except ToolError as e:
         fatal_error(str(e))

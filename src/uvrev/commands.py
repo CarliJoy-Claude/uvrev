@@ -4,7 +4,7 @@ import subprocess
 from collections.abc import Mapping
 from functools import cache
 from pathlib import Path
-from typing import Literal, overload
+from typing import Literal, Protocol, overload
 
 import click
 
@@ -95,6 +95,24 @@ def git(
     return None
 
 
+def uv_environ(project: UVRevProject, environ: Mapping[str, str]) -> dict[str, str]:
+    """Environment variables for uv commands of a project
+
+    >>> env = uv_environ(
+    ...     UVRevProject(Path("/project")),
+    ...     {"VIRTUAL_ENV": "/home/user/.venv", "UV_PYTHON": "3.8", "KEEP_ME": "IN"},
+    ... )
+    >>> sorted(env.items())
+    [('KEEP_ME', 'IN'), ('UV_COMPILE_BYTECODE', 'true')]
+    """
+    # VIRTUAL_ENV: disable warning about an activated environment
+    # UV_PYTHON: the project uses the Python version pinned in .python-version,
+    # otherwise uv would recreate the environment with another interpreter
+    env = {k: v for k, v in environ.items() if k not in {"VIRTUAL_ENV", "UV_PYTHON"}}
+    env["UV_COMPILE_BYTECODE"] = str(project.settings.compile_bytecode).lower()
+    return env
+
+
 def uv(
     *args: str,
     project: UVRevProject,
@@ -116,13 +134,7 @@ def uv(
     show_cwd_change(project.project_path)
     cmd = ("uv", *args)
     show_cmd(cmd)
-    env = os.environ.copy()
-    # VIRTUAL_ENV: disable warning about an activated environment
-    # UV_PYTHON: the project uses the Python version pinned in .python-version,
-    # otherwise uv would recreate the environment with another interpreter
-    for var in ("VIRTUAL_ENV", "UV_PYTHON"):
-        env.pop(var, None)
-    env["UV_COMPILE_BYTECODE"] = str(project.settings.compile_bytecode).lower()
+    env = uv_environ(project, os.environ)
     stdout: int | None = STDERR_FD
     if capture_output:
         stdout = subprocess.PIPE
@@ -140,6 +152,19 @@ def uv(
     except subprocess.CalledProcessError as e:
         raise SubprocessFailure(e) from e
     return result.stdout if capture_output else ""
+
+
+class UvRunner(Protocol):
+    """Signature of uv_tool, so tests can give another runner"""
+
+    def __call__(
+        self,
+        *args: str,
+        env: Mapping[str, str],
+        stdin: str | None = None,
+        capture_stdout: bool = False,
+        capture_stderr: bool = False,
+    ) -> str: ...
 
 
 def uv_tool(
