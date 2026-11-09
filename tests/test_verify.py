@@ -7,6 +7,7 @@ from click.testing import CliRunner, Result
 from conftest import Invoker, writable_paths
 from packaging.utils import NormalizedName
 
+from uvrev import operations
 from uvrev.cli import Services, cli
 from uvrev.protection import unprotect
 from uvrev.settings import load_settings
@@ -97,6 +98,37 @@ class TestFindProblems:
         assert Problem("not_synced", synced_project.lock_path) in problems
 
 
+@pytest.fixture
+def hardlinked_project(
+    sample_project: UVRevProject, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> UVRevProject:
+    """The sample project installed with uv's default hardlinks from its cache
+
+    A private cache is used, as the tests poison it on purpose.
+    """
+    monkeypatch.setenv("UV_LINK_MODE", "hardlink")
+    monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
+    operations.sync_packages(sample_project)
+    assert module(sample_project).stat().st_nlink > 1, "not hardlinked"
+    return sample_project
+
+
+class TestPoisonedCache:
+    """A file changed in the venv changes the hardlinked file in the uv cache
+
+    See https://github.com/astral-sh/uv/issues/22979
+    """
+
+    def test_fix(self, hardlinked_project: UVRevProject) -> None:
+        unprotect(hardlinked_project)
+        module(hardlinked_project).write_text("print('poisoned')")
+
+        problems = verify(hardlinked_project, fix=True)
+
+        assert problems == ()
+        assert "poisoned" not in module(hardlinked_project).read_text()
+
+
 class TestVerifyFix:
     def test_fix(self, synced_project: UVRevProject) -> None:
         unprotect(synced_project)
@@ -157,6 +189,8 @@ class TestCli:
         result = invoke("verify", "--fix")
 
         assert result.exit_code == 0
+        # the cache entry might be poisoned as well, it is removed first
+        assert "uv cache clean --force sampleproject" in result.output
         assert "--reinstall-package=sampleproject" in result.output
         assert module(synced_project).exists()
 

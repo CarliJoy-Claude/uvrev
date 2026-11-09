@@ -114,7 +114,13 @@ explaining how to disable the protection.
 - files not installed by any package (only a warning).
 
 `uvrev verify` exits with `1` if problems were found.
-`uvrev verify --fix` reinstalls the affected packages and protects the `.venv` again (if enabled).
+`uvrev verify --fix` removes the affected packages from the uv cache (`uv cache clean --force`),
+reinstalls them and protects the `.venv` again (if enabled).
+
+uv hardlinks the installed files from its cache, so a file changed in a `.venv` is changed in the
+cache as well, and in all other environments using it ([uv#22979](https://github.com/astral-sh/uv/issues/22979)).
+Reinstalling alone would link the changed file again, so the cache entry is removed first.
+Other environments sharing the changed file are only repaired by running `uvrev verify --fix` for them, too.
 Files not installed by any package are only reported, as they might be someone's work.
 
 To verify and fix the environment after every change, pass `--verify` to

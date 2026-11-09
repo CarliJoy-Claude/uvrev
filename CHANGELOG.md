@@ -30,7 +30,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `uvrev protect` and `uvrev unprotect` change the protection manually.
   See the [README](README.md#protected-environments).
 - `uvrev verify` checks the `.venv` against the `RECORD` files of the installed packages
-  and `uv.lock`, `uvrev verify --fix` repairs it.
+  and `uv.lock`, `uvrev verify --fix` repairs it. It removes the affected packages from the uv cache first,
+  as uv hardlinks files from its cache and a changed file poisons the cache as well
+  ([uv#22979](https://github.com/astral-sh/uv/issues/22979)).
   `--verify` runs it after `add`, `remove`, `sync`, `upgrade`, `upgrade-python` and `restore`.
 - Settings file in the user config directory (e.g. `~/.config/uvrev/config.toml`, `UVREV_SETTINGS` adds files),
   loaded with [typed-settings](https://typed-settings.readthedocs.io/).

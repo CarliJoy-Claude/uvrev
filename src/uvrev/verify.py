@@ -161,6 +161,12 @@ def verify(project: UVRevProject, fix: bool = False) -> tuple[Problem, ...]:
     syncs the venv with uv.lock and protects it (if enabled).
     Untracked files are only reported.
 
+    uv hardlinks the files of a package from its cache, so a file changed in
+    the venv is changed in the cache as well (and in all venvs using it).
+    Reinstalling alone would link the changed file again, so the cache entries
+    of the affected packages are removed first.
+    See https://github.com/astral-sh/uv/issues/22979
+
     Args:
         project: Project to verify.
         fix: Fix the problems.
@@ -179,6 +185,10 @@ def verify(project: UVRevProject, fix: bool = False) -> tuple[Problem, ...]:
             if problem.kind in REINSTALL and problem.package
         }
     )
+    if reinstall:
+        # --force: without it uv waits for other uv processes using the cache,
+        # e.g. forever if uvrev itself was started with uv run or uvx
+        uv("cache", "clean", "--force", *reinstall, project=project)
     with writable_venv(project):
         uv(
             "sync",
