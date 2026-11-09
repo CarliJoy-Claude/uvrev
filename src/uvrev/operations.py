@@ -1,10 +1,15 @@
 import contextlib
+import platform
 import re
+import shutil
 import subprocess
-from collections.abc import Mapping
-from importlib.metadata import distributions
+import sys
+from collections.abc import Iterator, Mapping
+from importlib.metadata import distributions, version as package_version
 from pathlib import Path
 
+import tomlkit
+from packaging.specifiers import SpecifierSet
 from packaging.utils import NormalizedName, canonicalize_name
 from packaging.version import Version
 
@@ -13,30 +18,62 @@ from .commands import git, uv
 from .differ import Diff, create_changelog
 from .exceptions import RevisionNotFoundError
 from .io import read_pyproject, write_pyproject
-from .parser import parse_pyproject_deps, parse_python_lock, parse_uv_lock_packages
+from .parser import (
+    parse_pyproject_deps,
+    parse_python_lock,
+    parse_uv_environments,
+    parse_uv_lock_packages,
+)
+from .protection import unprotect, writable_venv
 from .report import RevisionChange
+from .settings import Settings
 from .types import Revision, SubprocessFailure, UVRevProject
 
 
-def create_env(base_dir: Path, name: str, python: str | None = None) -> UVRevProject:
+def create_env(
+    base_dir: Path,
+    name: str,
+    python: str | None = None,
+    force: bool = False,
+    settings: Settings | None = None,
+) -> UVRevProject:
     """Create a new UV project with revision tracking.
+
+    Creating an environment that was created successfully before does nothing,
+    the Python version is not checked in this case.
 
     Args:
         base_dir: Base directory to create project in.
         name: Name of the project.
         python: Python version to use, None to let uv choose its default.
             uv pins the minor version in ``.python-version``.
+        force: Delete the folder of the environment first, if it was not
+            created successfully (no ``.uvrev_created_successfully``).
+        settings: Settings of uvrev (defaults if not given).
 
     Returns:
         Created UVRevProject instance.
 
     Raises:
-        ValueError: If project already exists.
+        FileExistsError: If the folder exists but the environment was not
+            created successfully and ``force`` is not given.
     """
     target = base_dir.joinpath(name)
+    project = UVRevProject(target, settings or Settings())
+    if project.created_successfully():
+        return project
     if target.exists():
-        raise FileExistsError(f"Folder for project '{name}' ({target}) already exists.")
-    project = UVRevProject(target)
+        if not force:
+            raise FileExistsError(
+                f"Folder for project '{name}' ({target}) already exists, "
+                "but the environment was not created successfully. "
+                f"Use 'uvrev env fix {name}' if it is a working environment "
+                f"(e.g. created by an older uvrev) or 'uvrev env create --force {name}' "
+                "to delete and create it again."
+            )
+        # a protected .venv can not be deleted
+        unprotect(project)
+        shutil.rmtree(target)
     target.mkdir(parents=True)
     # Create project using uv
     uv(
@@ -57,15 +94,101 @@ def create_env(base_dir: Path, name: str, python: str | None = None) -> UVRevPro
     data.setdefault("tool", {}).setdefault("uv", {})["package"] = False
     data.setdefault("project", {})["version"] = "0"
     write_pyproject(project, data)
-    uv("sync", project=project)
+    update_environments(project)
+    with writable_venv(project):
+        uv("sync", project=project)
     update_python_lock(project)
 
     # Create initial revision
     git("add", ".", project=project)
     git("commit", "-m", constants.INITIAL_COMMIT_MSG, project=project)
-    git("tag", "rev_0", project=project)
+    git(
+        "tag",
+        "-m",
+        constants.INITIAL_COMMIT_MSG,
+        "--annotate",
+        "rev_0",
+        project=project,
+    )
 
+    mark_created(project)
     return project
+
+
+def mark_created(project: UVRevProject) -> None:
+    """Mark the environment as created successfully.
+
+    The marker contains the uvrev version and is ignored by git
+    (``.git/info/exclude``, so no tracked file is changed).
+    """
+    exclude = project.project_path / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    ignored = exclude.read_text().splitlines() if exclude.exists() else []
+    if constants.CREATED_MARKER_FILE not in ignored:
+        exclude.write_text("\n".join((*ignored, constants.CREATED_MARKER_FILE)) + "\n")
+    project.created_marker_path.write_text(f"{package_version('uvrev')}\n")
+
+
+def supported_python_versions(
+    project: UVRevProject, requires_python: str
+) -> tuple[str, ...]:
+    """Python versions (major.minor) the environment is resolved for.
+
+    Taken from the setting ``python_versions_supported`` (by default the Python
+    versions installed for uv). Only versions matching ``requires-python`` are
+    used, as uv rejects environments that don't.
+
+    Args:
+        project: Project with the settings.
+        requires_python: ``requires-python`` of the project.
+
+    Returns:
+        Sorted versions.
+    """
+    spec = SpecifierSet(requires_python)
+    versions = {Version(v) for v in project.settings.python_versions_supported}
+    return tuple(str(v) for v in sorted(versions) if v in spec)
+
+
+def environment_markers(
+    versions: tuple[str, ...],
+    sys_platform: str = sys.platform,
+    machine: str = platform.machine(),
+) -> tuple[str, ...]:
+    """Markers for ``tool.uv.environments``, one per Python version.
+
+    >>> for marker in environment_markers(("3.12", "3.14"), "linux", "x86_64"):
+    ...     print(marker)
+    python_version == '3.12' and sys_platform == 'linux' and platform_machine == 'x86_64'
+    python_version == '3.14' and sys_platform == 'linux' and platform_machine == 'x86_64'
+    """
+    return tuple(
+        f"python_version == '{version}' and sys_platform == '{sys_platform}'"
+        f" and platform_machine == '{machine}'"
+        for version in versions
+    )
+
+
+def update_environments(project: UVRevProject) -> None:
+    """Update ``tool.uv.environments`` in pyproject.toml, if needed.
+
+    Called before uv resolves, otherwise the resolution might fail.
+    If no Python version is supported, the setting is removed.
+    """
+    data = read_pyproject(project)
+    requires_python = str(data.get("project", {}).get("requires-python", ""))
+    wanted = environment_markers(supported_python_versions(project, requires_python))
+    current = tuple(parse_uv_environments(tomlkit.dumps(data)))
+    if current == wanted:
+        return
+    uv_table = data.setdefault("tool", {}).setdefault("uv", {})
+    if wanted:
+        markers = tomlkit.array()
+        markers.extend(wanted)
+        uv_table["environments"] = markers.multiline(True)
+    else:
+        del uv_table["environments"]
+    write_pyproject(project, data)
 
 
 def list_projects(base_dir: Path) -> tuple[str, ...]:
@@ -233,8 +356,13 @@ def create_revision(
         parse_python_lock(current[project.python_lock_path]),
     )
 
+    environments = Diff(
+        parse_uv_environments(old[project.pyproject_path]),
+        parse_uv_environments(current[project.pyproject_path]),
+    )
+
     # Build changelog
-    changelog = create_changelog(deps, packages, python)
+    changelog = create_changelog(deps, packages, python, environments)
 
     rev_num = Revision(last_rev + 1)
 
@@ -252,7 +380,7 @@ def create_revision(
     # Create annotated tag (can be signed)
     git("tag", "-m", commit_msg, "--annotate", f"rev_{rev_num}", project=project)
 
-    return RevisionChange(last_rev, rev_num, packages, deps, python)
+    return RevisionChange(last_rev, rev_num, packages, deps, python, environments)
 
 
 def restore_revision(project: UVRevProject, rev_num: Revision) -> RevisionChange:
@@ -293,19 +421,16 @@ def restore_revision(project: UVRevProject, rev_num: Revision) -> RevisionChange
     return create_revision(project, f"Restored to revision {rev_num}")
 
 
-def sync_or_reset(project: UVRevProject, *args: str) -> None:
-    """Run ``uv sync``, on failure reset the files to the last revision.
+@contextlib.contextmanager
+def reset_on_failure(project: UVRevProject) -> Iterator[None]:
+    """Reset the files to the last revision, if a command fails.
 
-    Used after the files were changed (restore, Python version change), so a
-    failure (e.g. the Python version is not available) leaves no state behind
-    that does not match the virtual environment, which uv did not change.
-
-    Args:
-        project: Project to sync.
-        *args: Additional arguments for ``uv sync``.
+    Used around commands that change the files, so a failure (e.g. the Python
+    version is not available) leaves no state behind that is not part of a
+    revision.
     """
     try:
-        uv("sync", *args, project=project)
+        yield
     except SubprocessFailure:
         changed = (
             project.pyproject_path,
@@ -315,6 +440,17 @@ def sync_or_reset(project: UVRevProject, *args: str) -> None:
         reset = committed_files(project, "HEAD", changed)
         git("checkout", "HEAD", "--", *reset, project=project)
         raise
+
+
+def sync_or_reset(project: UVRevProject, *args: str) -> None:
+    """Run ``uv sync``, on failure reset the files to the last revision.
+
+    Args:
+        project: Project to sync.
+        *args: Additional arguments for ``uv sync``.
+    """
+    with reset_on_failure(project), writable_venv(project):
+        uv("sync", *args, project=project)
 
 
 def list_installed_packages(
@@ -338,18 +474,46 @@ def list_installed_packages(
     )
 
 
-def add_packages(project: UVRevProject, packages: tuple[str, ...]) -> RevisionChange:
+def add_packages(
+    project: UVRevProject,
+    packages: tuple[str, ...],
+    upgrade_all: bool = False,
+    python: str | None = None,
+) -> RevisionChange:
     """Add packages to project.
+
+    If a command fails, the files are reset to the last revision.
 
     Args:
         project: Project to add packages to.
-        packages: Package names to add.
+        packages: Requirements to add.
+        upgrade_all: Add with ``uv add --upgrade`` (so a package needing newer
+            versions of locked packages can be added) and run ``uv sync --upgrade``
+            afterwards, so everything is upgraded.
+        python: Python version for ``uv add --python``, pinned afterwards
+            with ``uv python pin``.
 
     Returns:
         Changes compared to the previous revision.
     """
-    uv("add", "--raw", *packages, project=project)
-    return create_revision(project, f"Added: {', '.join(packages)}")
+    with reset_on_failure(project), writable_venv(project):
+        update_environments(project)
+        uv(
+            "add",
+            "--raw",
+            *(("--upgrade",) if upgrade_all else ()),
+            *(("--python", python) if python else ()),
+            *packages,
+            project=project,
+        )
+        message = f"Added: {', '.join(packages)}"
+        if python:
+            uv("python", "pin", python, project=project)
+            message += f"; pinned Python {python}"
+        if upgrade_all:
+            uv("sync", "--upgrade", project=project)
+            message += "; upgraded all packages"
+    return create_revision(project, message)
 
 
 def remove_packages(project: UVRevProject, packages: tuple[str, ...]) -> RevisionChange:
@@ -362,7 +526,9 @@ def remove_packages(project: UVRevProject, packages: tuple[str, ...]) -> Revisio
     Returns:
         Changes compared to the previous revision.
     """
-    uv("remove", *packages, project=project)
+    with reset_on_failure(project), writable_venv(project):
+        update_environments(project)
+        uv("remove", *packages, project=project)
     return create_revision(project, f"Removed: {', '.join(packages)}")
 
 
@@ -376,14 +542,9 @@ def list_venv_packages(project: UVRevProject) -> Mapping[NormalizedName, Version
         Dictionary mapping canonical package names to their installed versions.
         Empty if the virtual environment does not exist (yet).
     """
-    venv = project.project_path / ".venv"
-    site_packages = (
-        *venv.glob("lib*/python*/site-packages"),
-        *venv.glob("Lib/site-packages"),
-    )
     return {
         canonicalize_name(dist.metadata["Name"]): Version(dist.version)
-        for dist in distributions(path=[str(path) for path in site_packages])
+        for dist in distributions(path=[str(path) for path in project.site_packages])
     }
 
 
@@ -400,7 +561,8 @@ def sync_packages(project: UVRevProject) -> RevisionChange:
     """
     installed_before = list_venv_packages(project)
     python_before = get_python_version(project)
-    uv("sync", "--frozen", project=project)
+    with writable_venv(project):
+        uv("sync", "--frozen", project=project)
     python_after = get_python_version(project)
     rev = get_last_revision_number(project)
     return RevisionChange(
@@ -446,13 +608,15 @@ def upgrade_packages(
     Returns:
         Changes compared to the previous revision.
     """
-    if packages:
-        for pkg in packages:
-            uv("sync", "--upgrade-package", pkg, project=project)
-        message = f"Upgraded: {', '.join(packages)}"
-    else:
-        uv("sync", "--upgrade", project=project)
-        message = "Upgraded all packages"
+    with reset_on_failure(project), writable_venv(project):
+        update_environments(project)
+        if packages:
+            for pkg in packages:
+                uv("sync", "--upgrade-package", pkg, project=project)
+            message = f"Upgraded: {', '.join(packages)}"
+        else:
+            uv("sync", "--upgrade", project=project)
+            message = "Upgraded all packages"
 
     return create_revision(project, message)
 
@@ -463,9 +627,9 @@ PYTHON_MINOR_VERSION = re.compile(r"^\d+\.\d+$")
 def upgrade_python(project: UVRevProject, version: str) -> RevisionChange:
     """Change the Python minor version of the environment (e.g. 3.12 to 3.14).
 
-    Pins the version in ``.python-version``, sets ``requires-python`` to it,
-    recreates the virtual environment and updates ``uv.lock``.
-    Downgrades are possible as well.
+    Pins the version with ``uv python pin`` (which checks it against
+    ``requires-python``), recreates the virtual environment and updates ``uv.lock``.
+    ``requires-python`` is not changed, so downgrades are possible as well.
     If uv fails, the files are reset to the last revision.
 
     Args:
@@ -488,11 +652,10 @@ def upgrade_python(project: UVRevProject, version: str) -> RevisionChange:
         else ""
     )
 
-    data = read_pyproject(project)
-    data.setdefault("project", {})["requires-python"] = f">={version}"
-    write_pyproject(project, data)
-    project.python_version_path.write_text(f"{version}\n")
-    sync_or_reset(project)
+    with reset_on_failure(project), writable_venv(project):
+        update_environments(project)
+        uv("python", "pin", version, project=project)
+        uv("sync", project=project)
 
     return create_revision(project, python_change_message(old, version))
 

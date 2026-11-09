@@ -1,20 +1,24 @@
 import json
+import platform
 import shutil
+import sys
+from importlib.metadata import version
 from itertools import chain
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 import pytest
-from click.testing import CliRunner, Result
+from click.testing import Result
+from conftest import Invoker, writable_paths
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-import uvrev.cli
 from uvrev import constants, operations
 from uvrev.commands import git
 from uvrev.io import read_pyproject
 from uvrev.operations import show_history
 from uvrev.parser import parse_uv_lock_packages
+from uvrev.settings import PYTHON_VERSIONS_SUPPORTED_ENV
 from uvrev.types import UVRevProject
 
 
@@ -23,10 +27,6 @@ def create_fake_env(path: Path) -> None:
     proj = UVRevProject(path)
     proj.lock_path.touch()
     proj.pyproject_path.write_text("[tool.uv]\npackage = false\n")
-
-
-class Invoker(Protocol):
-    def __call__(self, *args: str) -> Result: ...
 
 
 @pytest.fixture(scope="module")
@@ -64,17 +64,6 @@ def shared_project(shared_basedir: Path) -> UVRevProject:
     return UVRevProject(shared_basedir / constants.DEFAULT_ENV)
 
 
-@pytest.fixture
-def invoke() -> Invoker:
-    """Create a CLI test runner."""
-    runner = CliRunner()
-
-    def invoke(*args: str) -> Result:
-        return runner.invoke(uvrev.cli.cli, args=args)
-
-    return invoke
-
-
 @pytest.fixture(autouse=True)
 def tmp_basedir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
@@ -91,16 +80,6 @@ def upgradeable_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
     proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
     operations.create_env(fake_basedir, constants.DEFAULT_ENV)
     shutil.copytree(data_dir / "upgradeable", proj.project_path, dirs_exist_ok=True)
-    operations.create_revision(proj, "Add sampleproject")
-    return proj
-
-
-@pytest.fixture
-def sample_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
-    """Create a project with a lock file that is not yet installed"""
-    proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
-    operations.create_env(fake_basedir, constants.DEFAULT_ENV)
-    shutil.copytree(data_dir / "sample", proj.project_path, dirs_exist_ok=True)
     operations.create_revision(proj, "Add sampleproject")
     return proj
 
@@ -251,11 +230,171 @@ class TestEnvCreate:
             ".gitignore",
             ".python-version",
             ".python-version.lock",
+            constants.CREATED_MARKER_FILE,
             ".git",
             ".venv",
         }
         created_files = {f.name for f in target.iterdir()}
         assert created_files == accepted_files
+
+        # the venv is protected
+        assert writable_paths(proj.venv_path) == ()
+
+
+class TestEnvCreateIdempotent:
+    """uvrev env create on existing environments and uvrev env fix"""
+
+    def test_create_again(self, invoke: Invoker, fake_basedir: Path) -> None:
+        assert invoke("env", "create").exit_code == 0
+        proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
+        head = git("rev-parse", "HEAD", project=proj, capture_output=True)
+
+        result = invoke("env", "create", "--python", "3.99")
+
+        # nothing is done, the Python version is not checked
+        assert result.exit_code == 0, result.output
+        assert "already exists" in result.output
+        assert git("rev-parse", "HEAD", project=proj, capture_output=True) == head
+        # also the function itself is idempotent
+        assert operations.create_env(fake_basedir, constants.DEFAULT_ENV) == proj
+
+    def test_created_marker(self, invoke: Invoker, fake_basedir: Path) -> None:
+        assert invoke("env", "create").exit_code == 0
+        proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
+
+        assert proj.created_marker_path.read_text().strip() == version("uvrev")
+        # the marker is ignored by git
+        status = git("status", "--porcelain", project=proj, capture_output=True)
+        assert status == ""
+        # the initial revision is an annotated tag as well
+        tag_type = git("cat-file", "-t", "rev_0", project=proj, capture_output=True)
+        assert tag_type.strip() == "tag"
+
+    def test_force(self, invoke: Invoker, fake_basedir: Path) -> None:
+        """--force deletes environments that were not created successfully"""
+        target = fake_basedir / constants.DEFAULT_ENV
+        create_fake_env(target)
+        target.joinpath("leftover").touch()
+
+        result = invoke("env", "create")
+        assert result.exit_code == 1
+        assert "uvrev env fix" in result.output
+        assert "--force" in result.output
+
+        result = invoke("env", "create", "--force")
+        assert result.exit_code == 0, result.output
+        assert not target.joinpath("leftover").exists()
+        assert UVRevProject(target).created_successfully()
+
+    def test_warning_and_fix(self, invoke: Invoker, fake_basedir: Path) -> None:
+        target = fake_basedir / "old"
+        create_fake_env(target)
+
+        result = invoke("path", "-e", "old")
+        assert result.exit_code == 0
+        assert "was not created successfully" in result.output
+        assert "uvrev env fix old" in result.output
+        assert "uvrev env fix old" in invoke("env", "list").output
+
+        # .git/info/exclude is created if needed
+        assert invoke("env", "fix", "old").exit_code == 0
+        assert UVRevProject(target).created_successfully()
+        exclude = target / ".git" / "info" / "exclude"
+        assert exclude.read_text() == f"{constants.CREATED_MARKER_FILE}\n"
+
+        # existing ignores are kept and the marker is added only once
+        exclude.write_text("*.log")
+        assert invoke("env", "fix", "old").exit_code == 0
+        assert invoke("env", "fix", "old").exit_code == 0
+        assert exclude.read_text() == f"*.log\n{constants.CREATED_MARKER_FILE}\n"
+
+        result = invoke("path", "-e", "old")
+        assert "was not created successfully" not in result.output
+        assert "uvrev env fix" not in invoke("env", "list").output
+
+    def test_fix_missing(self, invoke: Invoker, fake_basedir: Path) -> None:
+        result = invoke("env", "fix", "missing")
+        assert result.exit_code == 1
+        assert "does not exist" in result.output
+
+
+class TestEnvironments:
+    """tool.uv.environments"""
+
+    def environments(self, proj: UVRevProject) -> list[str]:
+        uv_table: Any = read_pyproject(proj)["tool"]["uv"]
+        return list(uv_table.get("environments", []))
+
+    def test_created_with_installed(self, invoke: Invoker, fake_basedir: Path) -> None:
+        """Without setting, the installed versions matching requires-python"""
+        assert invoke("env", "create").exit_code == 0
+        proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
+        pinned = proj.python_version_path.read_text().strip()
+
+        markers = self.environments(proj)
+        assert markers
+        assert any(f"python_version == '{pinned}' and" in m for m in markers)
+        assert all(
+            f"sys_platform == '{sys.platform}'" in m
+            and f"platform_machine == '{platform.machine()}'" in m
+            for m in markers
+        )
+
+    def test_setting(
+        self,
+        invoke: Invoker,
+        fake_basedir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        assert invoke("env", "create").exit_code == 0
+        proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
+        pinned = proj.python_version_path.read_text().strip()
+
+        # no supported version (3.0 is below requires-python):
+        # tool.uv.environments is removed
+        monkeypatch.setenv(PYTHON_VERSIONS_SUPPORTED_ENV, "3.0")
+        report = parse_report(invoke("upgrade", "--json"))
+        assert report["revision"] == 1
+        assert report["environments"]["new"] == []
+        assert self.environments(proj) == []
+
+        # versions below requires-python are not used
+        monkeypatch.setenv(PYTHON_VERSIONS_SUPPORTED_ENV, f"3.0, {pinned}")
+        result = invoke("add", "peppercorn", "--json")
+
+        assert result.exit_code == 0, result.output
+        report = parse_report(result)
+        assert report["revision"] == 2
+        assert report["environments"] == {
+            "old": [],
+            "new": list(operations.environment_markers((pinned,))),
+        }
+        assert self.environments(proj) == report["environments"]["new"]
+        message = git("log", "-1", "--format=%B", project=proj, capture_output=True)
+        assert "Environments:" in message
+
+        # nothing to update anymore
+        report = parse_report(invoke("remove", "peppercorn", "--json"))
+        assert report["revision"] == 3
+        assert report["environments"] is None
+
+        # sync and restore don't update the environments
+        assert invoke("sync").exit_code == 0
+        assert invoke("restore", "1").exit_code == 0
+        assert self.environments(proj) == []
+
+    def test_invalid_setting(
+        self,
+        invoke: Invoker,
+        upgradeable_project: UVRevProject,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv(PYTHON_VERSIONS_SUPPORTED_ENV, "3.12,abc")
+
+        result = invoke("upgrade")
+
+        assert result.exit_code == 1
+        assert PYTHON_VERSIONS_SUPPORTED_ENV in result.output
 
 
 class TestEnvList:
@@ -560,6 +699,64 @@ class TestUpgrade:
         assert "→ sampleproject==3.0.0" in history
 
 
+class TestAddUpgradeAll:
+    def test_add_upgrade_json(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """Adding with --upgrade-all adds the package and upgrades everything"""
+        result = invoke("add", "--upgrade-all", "peppercorn", "--json")
+
+        assert result.exit_code == 0
+        assert "Created revision 2" in result.output
+        # added with --upgrade, so locked versions don't block the new package
+        assert "uv add --raw --upgrade peppercorn" in result.output
+        assert "uv sync --upgrade" in result.output
+        report = parse_report(result)
+        assert report["command"] == "add"
+        assert report["arguments"] == ["peppercorn"]
+        assert report["options"] == {"upgrade_all": True, "python": None}
+        assert report["revision"] == 2
+        assert report["changes"] == {
+            "added": [],
+            "updated": ["peppercorn", "sampleproject"],
+            "downgraded": [],
+            "removed": [],
+        }
+        assert report["dependency_changes"] == {
+            "added": ["peppercorn"],
+            "updated": [],
+            "downgraded": [],
+            "removed": [],
+        }
+
+        history = show_history(upgradeable_project)
+        assert "Added: peppercorn; upgraded all packages" in history
+
+    def test_add_without_upgrade_json(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """Without --upgrade-all the other packages keep their version"""
+        result = invoke("add", "peppercorn", "--json")
+
+        assert result.exit_code == 0
+        report = parse_report(result)
+        assert report["options"] == {"upgrade_all": False, "python": None}
+        assert report["changes"] == NO_CHANGES
+        assert report["all_changed_dependencies"] == ["peppercorn"]
+
+    def test_add_failing_json(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """The error report contains the options as well"""
+        result = invoke("add", "--upgrade-all", "uvrev-does-not-exist", "--json")
+
+        assert result.exit_code == 1
+        report = parse_report(result)
+        assert report["status"] == "error"
+        assert report["options"] == {"upgrade_all": True, "python": None}
+        assert report["revision"] == report["previous_revision"] == 1
+
+
 class TestCliIntegration:
     """
     Integrations of adding/deleting and restoring packages
@@ -604,7 +801,8 @@ class TestCliIntegration:
     def test_run(self, invoke: Invoker, shared_project: UVRevProject) -> None:
         result = invoke("run", "cowsay", "-t", "This is actually working")
         assert result.exit_code == 0
-        assert "uv run --locked cowsay" in result.output
+        assert "uv sync --locked --check" in result.output
+        assert "uv run --no-sync cowsay" in result.output
         assert "This is actually working" in result.output
 
     @pytest.mark.dependency(name="2-remove", depends=["1-add"])

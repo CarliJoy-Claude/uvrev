@@ -13,6 +13,7 @@ import uvrev.cli
 from uvrev import constants, operations
 from uvrev.commands import git
 from uvrev.io import read_pyproject
+from uvrev.protection import unprotect
 from uvrev.types import SubprocessFailure, UVRevProject
 
 
@@ -20,19 +21,21 @@ def invoke(*args: str) -> Result:
     return CliRunner().invoke(uvrev.cli.cli, args=args)
 
 
-def other_python(current: str) -> str | None:
-    """A Python minor version other than the current one, that is installed"""
-    for version in ("3.12", "3.13", "3.14", "3.15"):
-        if version == current:
-            continue
-        found = subprocess.run(
+def two_pythons() -> tuple[str, str]:
+    """Two installed Python minor versions, the lower one first"""
+    installed = [
+        version
+        for version in ("3.12", "3.13", "3.14", "3.15")
+        if subprocess.run(
             ("uv", "python", "find", "--no-python-downloads", version),
             capture_output=True,
             check=False,
-        )
-        if found.returncode == 0:
-            return version
-    return None  # pragma: no cover
+        ).returncode
+        == 0
+    ]
+    if len(installed) < 2:  # pragma: no cover
+        pytest.skip("needs a 2nd Python version")
+    return installed[0], installed[1]
 
 
 @pytest.fixture
@@ -116,6 +119,7 @@ class TestPythonLock:
 
     def test_no_venv(self, project: UVRevProject) -> None:
         """Without virtual environment the recorded version is kept"""
+        unprotect(project)
         shutil.rmtree(project.venv_path)
 
         assert operations.get_python_version(project) is None
@@ -125,6 +129,7 @@ class TestPythonLock:
 
     def test_sync_reports_python(self, project: UVRevProject) -> None:
         """Syncing a removed environment reports the newly used interpreter"""
+        unprotect(project)
         shutil.rmtree(project.venv_path)
 
         result = invoke("sync", "--json")
@@ -253,14 +258,13 @@ class TestUpgradePython:
         assert pinned(project) == current
         assert python_version(project) == python_before
 
-    def test_upgrade_and_restore(self, project: UVRevProject) -> None:
-        old_pinned = pinned(project)
-        version = other_python(old_pinned)
-        if version is None:  # pragma: no cover
-            pytest.skip("needs a 2nd Python version")
+    def test_upgrade_and_restore(self, fake_basedir: Path) -> None:
+        old_pinned, version = two_pythons()
+        project = operations.create_env(fake_basedir, "two", old_pinned)
         old_python = python_version(project)
+        requires_python = read_pyproject(project)["project"]["requires-python"]
 
-        result = invoke("upgrade-python", version, "--json")
+        result = invoke("upgrade-python", "-e", "two", version, "--json")
 
         assert result.exit_code == 0, result.output
         report: dict[str, Any] = json.loads(result.stdout)
@@ -269,17 +273,88 @@ class TestUpgradePython:
         assert report["revision"] == 1
         assert report["python"] == {"old": old_python, "new": new_python}
         assert project.python_version_path.read_text() == f"{version}\n"
+        # requires-python is not changed
         pyproject: Any = read_pyproject(project)
-        assert pyproject["project"]["requires-python"] == f">={version}"
+        assert pyproject["project"]["requires-python"] == requires_python
         message = last_commit_message(project)
         assert f"Python: {old_pinned} → {version}" in message
         assert f"python=={old_python} → python=={new_python}" in message
 
         # the requested Python version is restored as well
-        result = invoke("restore", "0", "--json")
+        result = invoke("restore", "-e", "two", "0", "--json")
 
         assert result.exit_code == 0, result.output
         report = json.loads(result.stdout)
         assert report["python"] == {"old": new_python, "new": old_python}
         assert python_version(project) == old_python
         assert pinned(project) == old_pinned
+
+        # downgrading works as well, as requires-python was not changed
+        result = invoke("upgrade-python", "-e", "two", version)
+        assert result.exit_code == 0, result.output
+        result = invoke("upgrade-python", "-e", "two", old_pinned)
+        assert result.exit_code == 0, result.output
+        assert python_version(project) == old_python
+
+    def test_below_requires_python(self, fake_basedir: Path) -> None:
+        """uv python pin refuses versions not matching requires-python"""
+        old, new = two_pythons()
+        project = operations.create_env(fake_basedir, "two", new)
+
+        result = invoke("upgrade-python", "-e", "two", old, "--json")
+
+        assert result.exit_code == 1
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert "uv python pin" in report["error_message"]
+        assert pinned(project) == new
+        status = git("status", "--porcelain", project=project, capture_output=True)
+        assert status == ""
+
+
+class TestAddPython:
+    def test_add_with_same_python(self, project: UVRevProject) -> None:
+        """Works with a single installed Python as well"""
+        current = pinned(project)
+
+        result = invoke("add", "--python", current, "peppercorn", "--json")
+
+        assert result.exit_code == 0, result.output
+        assert f"uv add --raw --python {current} peppercorn" in result.stderr
+        assert f"uv python pin {current}" in result.stderr
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["options"] == {"upgrade_all": False, "python": current}
+        assert report["python"] is None
+        assert pinned(project) == current
+
+    def test_add_with_python(self, fake_basedir: Path) -> None:
+        """uv add --python installs the version, uv python pin pins it"""
+        old, new = two_pythons()
+        project = operations.create_env(fake_basedir, "two", old)
+        old_python = python_version(project)
+        requires_python = read_pyproject(project)["project"]["requires-python"]
+
+        result = invoke("add", "-e", "two", "--python", new, "peppercorn", "--json")
+
+        assert result.exit_code == 0, result.output
+        assert "uv add --raw --python" in result.stderr
+        assert f"uv python pin {new}" in result.stderr
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["options"] == {"upgrade_all": False, "python": new}
+        assert report["python"] == {"old": old_python, "new": python_version(project)}
+        assert report["all_changed_dependencies"] == ["peppercorn"]
+        assert pinned(project) == new
+        pyproject: Any = read_pyproject(project)
+        assert pyproject["project"]["requires-python"] == requires_python
+        assert f"pinned Python {new}" in last_commit_message(project)
+
+    def test_add_with_python_below_requires_python(self, fake_basedir: Path) -> None:
+        """uv refuses the version, the files are not changed"""
+        old, new = two_pythons()
+        project = operations.create_env(fake_basedir, "two", new)
+
+        result = invoke("add", "-e", "two", "--python", old, "peppercorn")
+
+        assert result.exit_code == 1
+        assert pinned(project) == new
+        status = git("status", "--porcelain", project=project, capture_output=True)
+        assert status == ""

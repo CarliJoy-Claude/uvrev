@@ -4,6 +4,52 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4] (2026-11-10)
+
+### Added
+
+- Protected environments: the `.venv` is read-only (`chmod -R a-w .venv`) and only writable
+  (`chmod -R u+w .venv`) while uv changes it, so it can not be changed by accident.
+  This includes the environments of `uvrev tool run`. See the [README](README.md#protected-environments).
+  - `uvrev protect` / `uvrev unprotect`: change the protection manually.
+- `uvrev verify`: checks the `.venv` against the `RECORD` files of the installed packages and against `uv.lock`.
+  See the [README](README.md#verify-environments).
+  - `--fix`: removes the broken packages from the uv cache and reinstalls them.
+    uv hardlinks files from its cache, so a file changed in a `.venv` changes the cache as well
+    ([uv#22979](https://github.com/astral-sh/uv/issues/22979)).
+  - `--verify` for `add`, `remove`, `sync`, `upgrade`, `upgrade-python` and `restore`:
+    runs `uvrev verify --fix` afterwards.
+- Settings: `[uvrev]` table in a file in the user config directory (e.g. `~/.config/uvrev/config.toml`),
+  each setting can be overridden by an environment variable (e.g. `UVREV_PROTECT=false`).
+  See the [README](README.md#settings).
+  - `uvrev settings`: shows the settings and the location of the file.
+- `uvrev add`: two new options, each in one revision:
+  - `--upgrade-all`: adds the packages and upgrades all packages (`uv add --raw --upgrade`, then `uv sync --upgrade`).
+  - `--python <version>`: adds the packages and changes the Python version (`uv add --raw --python`, then `uv python pin`).
+- `uvrev env create` does nothing for an environment that was created successfully before
+  (marked by `.uvrev_created_successfully`). See the [README](README.md#creating-environments).
+  - `--force`: deletes an environment folder without this file first.
+  - `uvrev env fix`: marks an environment of an older uvrev as created successfully.
+- `tool.uv.environments`: packages are only resolved for the current platform and the supported Python versions
+  (setting `python_versions_supported`, by default the installed ones).
+  `add`, `remove`, `upgrade` and `upgrade-python` update it. See the [README](README.md#supported-environments).
+- JSON report: new fields `environments` and `options` (the options of the command), `schema_version` stays 2.
+
+### Changed
+
+- `uvrev upgrade-python` no longer changes `requires-python` (it runs `uv python pin`), so downgrades are possible.
+- `uvrev run` syncs the environment only if needed and runs the command with the protected `.venv` (`uv run --no-sync`).
+- `add`, `remove` and `upgrade` reset the files to the last revision if uv fails.
+- uv compiles bytecode on install (setting `compile_bytecode`), as a protected `.venv` can not cache it later.
+- The first revision `rev_0` is an annotated tag like all other revisions.
+- `httpx2` is required without a minimum version.
+- CI runs the tests as a normal user, so the protection is tested for real.
+- `AGENTS.md` describes the conventions for contributors and AI agents.
+
+### Fixed
+
+- Signing a release (PEP 740 attestations) failed because of wrong `uv run` options.
+
 ## [0.3] (2026-11-01)
 
 ### Added
@@ -92,6 +138,7 @@ First real release.
 - `uvrev history` shows the revisions and `uvrev restore` goes back to a previous one.
 - `uvrev path` shows the location of an environment.
 
+[0.4]: https://gitlab.com/Kound/uvrev/-/compare/0.3...0.4
 [0.3]: https://gitlab.com/Kound/uvrev/-/compare/0.2...0.3
 [0.2]: https://gitlab.com/Kound/uvrev/-/compare/0.1.4...0.2
 [0.1.4]: https://gitlab.com/Kound/uvrev/-/compare/0.1.3...0.1.4

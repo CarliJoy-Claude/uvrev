@@ -12,10 +12,11 @@ requires-python = ">=3.12"
 dependencies = [
     "click>=8",
     "filelock>=3.12",
-    "httpx2>=2.16",
+    "httpx2",
     "packaging>=25.0",
     "platformdirs>=4",
     "tomlkit>=0.13",
+    "typed-settings>=26",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

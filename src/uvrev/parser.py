@@ -119,3 +119,32 @@ def parse_python_lock(content: str) -> Mapping[NormalizedName, Version]:
     if not (version := content.strip()):
         return {}
     return {canonicalize_name("python"): Version(version)}
+
+
+def parse_uv_environments(toml_content: str) -> Mapping[NormalizedName, None]:
+    """Parse ``tool.uv.environments`` from pyproject.toml content.
+
+    The markers are used as keys, so they can be compared with a ``Diff``
+    like packages (they are not normalized, ``NormalizedName`` is only the type).
+
+    Examples:
+        >>> parse_uv_environments('''
+        ... [tool.uv]
+        ... environments = ["python_version == '3.12'", "python_version == '3.14'"]
+        ... ''')
+        {"python_version == '3.12'": None, "python_version == '3.14'": None}
+        >>> parse_uv_environments('''
+        ... [tool.uv]
+        ... environments = "sys_platform == 'linux'"
+        ... ''')
+        {"sys_platform == 'linux'": None}
+        >>> parse_uv_environments("")
+        {}
+    """
+    if not toml_content.strip():
+        return {}
+    data = tomllib.loads(toml_content)
+    environments = data.get("tool", {}).get("uv", {}).get("environments", ())
+    if isinstance(environments, str):
+        environments = (environments,)
+    return {NormalizedName(marker): None for marker in environments}

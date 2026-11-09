@@ -1,11 +1,11 @@
-import subprocess
 from pathlib import Path
 from typing import Protocol
-from unittest import mock
 
 import pytest
 
 from uvrev import commands
+from uvrev.commands import uv, uv_environ
+from uvrev.settings import Settings
 from uvrev.types import SubprocessFailure, UVRevProject
 
 
@@ -25,18 +25,33 @@ class TestFailing:
 
 
 class TestUV:
-    def test_remove_virtualenv(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_environ(self) -> None:
         """
-        When running uv, remove the VIRTUAL_ENV parameter as it potentiell confusing uv
+        uv gets the environment without VIRTUAL_ENV (it confuses uv) and UV_PYTHON
         """
-        run_mock: mock.MagicMock = mock.create_autospec(subprocess.run)
-        monkeypatch.setattr(subprocess, "run", run_mock)
-        monkeypatch.setenv("VIRTUAL_ENV", "/home/user/.venv")
-        monkeypatch.setenv("KEEP_ME", "IN")
+        environ = {
+            "VIRTUAL_ENV": "/home/user/.venv",
+            "UV_PYTHON": "3.8",
+            "KEEP_ME": "IN",
+        }
+        project = UVRevProject(Path("/"), Settings(compile_bytecode=False))
 
-        commands.uv("--help", project=UVRevProject(Path("/")))
+        env = uv_environ(project, environ)
 
-        run_mock.assert_called_once()
-        env = run_mock.call_args.kwargs["env"]
         assert "VIRTUAL_ENV" not in env
+        assert "UV_PYTHON" not in env
         assert env["KEEP_ME"] == "IN"
+        assert env["UV_COMPILE_BYTECODE"] == "false"
+        # the given environment is not changed
+        assert environ["VIRTUAL_ENV"] == "/home/user/.venv"
+
+    def test_virtual_env_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A really activated other venv does not change the project's venv"""
+        monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "other" / ".venv"))
+        project = UVRevProject(tmp_path)
+
+        output = uv("--version", project=project, capture_output=True)
+
+        assert output.startswith("uv ")

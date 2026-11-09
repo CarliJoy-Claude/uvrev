@@ -4,6 +4,8 @@ import hashlib
 import json
 import re
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -13,14 +15,15 @@ from click.testing import CliRunner
 from packaging.utils import NormalizedName
 from packaging.version import Version
 
-import uvrev.tool
 from uvrev.cli import cli
-from uvrev.commands import uv_tool
+from uvrev.commands import UvRunner, uv_tool
 from uvrev.exceptions import ToolError
+from uvrev.settings import Settings
 from uvrev.tool import (
     RECEIPT_NAME,
     EmbeddedProject,
     ToolRequest,
+    ToolServices,
     ToolSpec,
     check_embedded,
     console_scripts,
@@ -298,13 +301,14 @@ class TestDownload:
         url: str,
         warned: bool,
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setattr(uvrev.tool, "download", lambda *_: None)
+        def no_download(url: str, target: Path) -> None:
+            pass
+
         wheel = parse_spec(url).wheel
         assert wheel is not None
-        fetch_wheel(wheel, tmp_path)
+        fetch_wheel(wheel, tmp_path, no_download)
         assert ("integrity is not verified" in capsys.readouterr().err) is warned
 
 
@@ -464,46 +468,54 @@ class TestEnvironment:
 
         assert uv_environment(Path("/venv"))["UV_PROJECT_ENVIRONMENT"] == "/venv"
 
-    def test_built_by_parallel_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_built_by_parallel_run(self) -> None:
         """A parallel run built the environment while waiting for the lock"""
-        answers = iter((False, True))
-        monkeypatch.setattr(uvrev.tool, "has_receipt", lambda *_: next(answers))
+
+        @contextmanager
+        def lock_held_by_parallel_run(path: Path) -> Iterator[None]:
+            # the parallel run finished its build while we waited
+            directory = tool_directory(REQUEST)
+            directory.mkdir(parents=True)
+            receipt = {"package": NAME, "version": "1.0", "wheel_sha256": None}
+            (directory / RECEIPT_NAME).write_text(json.dumps(receipt))
+            yield
 
         def fail(*_: Any) -> None:
             raise AssertionError("must not build")
 
-        monkeypatch.setattr(uvrev.tool, "build_environment", fail)
-        assert ensure_environment(REQUEST, refresh=False) == tool_directory(REQUEST)
+        services = ToolServices(lock=lock_held_by_parallel_run, build=fail)
+        directory = ensure_environment(REQUEST, refresh=False, services=services)
+        assert directory == tool_directory(REQUEST)
 
-    def test_failed_build_is_removed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def interrupted(directory: Path, request: ToolRequest) -> None:
+    def test_failed_build_is_removed(self) -> None:
+        def interrupted(
+            directory: Path, request: ToolRequest, settings: Settings, uv: UvRunner
+        ) -> None:
             directory.mkdir(parents=True)
             raise KeyboardInterrupt
 
-        monkeypatch.setattr(uvrev.tool, "build_environment", interrupted)
         with pytest.raises(KeyboardInterrupt):
-            ensure_environment(REQUEST, refresh=False)
+            ensure_environment(
+                REQUEST, refresh=False, services=ToolServices(build=interrupted)
+            )
         assert not tool_directory(REQUEST).exists()
 
 
 class TestUv:
-    def test_resolve_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_resolve_version(self) -> None:
         calls: list[tuple[tuple[str, ...], dict[str, Any]]] = []
 
         def fake(*args: str, **kwargs: Any) -> str:
             calls.append((args, kwargs))
             return "my-tool==3.1\n"
 
-        monkeypatch.setattr(uvrev.tool, "uv_tool", fake)
-        assert resolve_version(NAME, "3.13") == Version("3.1")
+        assert resolve_version(NAME, "3.13", fake) == Version("3.1")
         ((args, kwargs),) = calls
         assert args[:3] == ("pip", "compile", "-")
         assert args[-2:] == ("--python", "3.13")
         assert kwargs["stdin"] == "my-tool\n"
 
-    def test_sync_other_failure(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_sync_other_failure(self, tmp_path: Path) -> None:
         """Failures not caused by --locked are passed on"""
 
         def fake(*args: str, **kwargs: Any) -> str:
@@ -511,9 +523,8 @@ class TestUv:
                 subprocess.CalledProcessError(2, ("uv",), None, "network down")
             )
 
-        monkeypatch.setattr(uvrev.tool, "uv_tool", fake)
         with pytest.raises(SubprocessFailure, match="exit status 2"):
-            sync_dependencies(tmp_path, REQUEST, {})
+            sync_dependencies(tmp_path, REQUEST, {}, fake)
 
     def test_uv_tool_capture(self) -> None:
         output = uv_tool("--version", env=uv_environment(), capture_stdout=True)

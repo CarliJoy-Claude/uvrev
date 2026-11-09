@@ -21,11 +21,13 @@ from typing import Any
 
 import pytest
 from click.testing import CliRunner, Result
+from conftest import writable_paths
 
-import uvrev.commands
-import uvrev.tool
-from uvrev.cli import cli
-from uvrev.tool import RECEIPT_NAME
+from uvrev.cli import Services, cli
+from uvrev.commands import uv_tool
+from uvrev.protection import unprotect_venv
+from uvrev.settings import Settings, load_settings
+from uvrev.tool import RECEIPT_NAME, ToolServices
 
 pytestmark = pytest.mark.network
 
@@ -237,18 +239,35 @@ def tool_env(find_links: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     return cache
 
 
+class UvSpy(list[tuple[str, ...]]):
+    """Records the arguments of all uv calls of uvrev tool"""
+
+    def __call__(
+        self,
+        *args: str,
+        env: Mapping[str, str],
+        stdin: str | None = None,
+        capture_stdout: bool = False,
+        capture_stderr: bool = False,
+    ) -> str:
+        self.append(args)
+        return uv_tool(
+            *args,
+            env=env,
+            stdin=stdin,
+            capture_stdout=capture_stdout,
+            capture_stderr=capture_stderr,
+        )
+
+    def run(self, *args: str) -> Result:
+        """uvrev tool run, recording the uv calls"""
+        services = Services(load_settings(), tool=ToolServices(uv=self))
+        return CliRunner().invoke(cli, args=("tool", "run", *args), obj=services)
+
+
 @pytest.fixture
-def uv_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
-    """Record the arguments of all uv calls of uvrev tool"""
-    calls: list[tuple[str, ...]] = []
-    original = uvrev.commands.uv_tool
-
-    def spy(*args: str, **kwargs: Any) -> str:
-        calls.append(args)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(uvrev.tool, "uv_tool", spy)
-    return calls
+def uv_calls() -> UvSpy:
+    return UvSpy()
 
 
 def syncs(calls: list[tuple[str, ...]]) -> int:
@@ -275,11 +294,11 @@ class TestHappyPath:
         self,
         capfd: pytest.CaptureFixture[str],
         tool_env: Path,
-        uv_calls: list[tuple[str, ...]],
+        uv_calls: UvSpy,
     ) -> None:
         """Case 1 and 3: arguments and exit code pass through, dev group skipped"""
         args = ("-x", "--extra", "idn", "--refresh", "--", "exit=3")
-        result = run("uvrev-fx-app", *args)
+        result = uv_calls.run("uvrev-fx-app", *args)
 
         assert result.exit_code == 3, result.output
         output = tool_output(capfd)
@@ -321,11 +340,9 @@ class TestHappyPath:
 
 
 class TestExtras:
-    def test_extra(
-        self, capfd: pytest.CaptureFixture[str], uv_calls: list[tuple[str, ...]]
-    ) -> None:
+    def test_extra(self, capfd: pytest.CaptureFixture[str], uv_calls: UvSpy) -> None:
         """Case 2: --extra installs the extra"""
-        result = run("--extra", "IDN", "uvrev-fx-app")
+        result = uv_calls.run("--extra", "IDN", "uvrev-fx-app")
         assert result.exit_code == 0, result.output
         assert tool_output(capfd)["modules"] == {
             "six": True,
@@ -335,11 +352,9 @@ class TestExtras:
         (sync,) = (call for call in uv_calls if call[0] == "sync")
         assert sync[sync.index("--extra") :][:2] == ("--extra", "idn")
 
-    def test_unknown_extra(
-        self, tool_env: Path, uv_calls: list[tuple[str, ...]]
-    ) -> None:
+    def test_unknown_extra(self, tool_env: Path, uv_calls: UvSpy) -> None:
         """Case 2: an unknown extra fails before uv sync"""
-        result = run("--extra", "idn", "--extra", "nope", "uvrev-fx-app")
+        result = uv_calls.run("--extra", "idn", "--extra", "nope", "uvrev-fx-app")
         assert result.exit_code == 1
         assert "Unknown extra(s) of 'uvrev-fx-app': nope" in result.stderr
         assert "Available: idn" in result.stderr
@@ -366,9 +381,9 @@ class TestRefused:
         assert "the lock was outdated when the release was built" in result.stderr
         assert tool_dirs(tool_env, "uvrev-fx-stale") == ()
 
-    def test_dynamic_dependencies(self, uv_calls: list[tuple[str, ...]]) -> None:
+    def test_dynamic_dependencies(self, uv_calls: UvSpy) -> None:
         """Case 6: dynamic dependencies fail before uv sync"""
-        result = run("uvrev-fx-dyndeps")
+        result = uv_calls.run("uvrev-fx-dyndeps")
         assert result.exit_code == 1
         assert "declares dependencies as dynamic" in result.stderr
         assert "uv would need the source tree" in result.stderr
@@ -385,24 +400,29 @@ def test_dynamic_version(capfd: pytest.CaptureFixture[str]) -> None:
 def test_cache_and_refresh(
     capfd: pytest.CaptureFixture[str],
     tool_env: Path,
-    uv_calls: list[tuple[str, ...]],
+    uv_calls: UvSpy,
 ) -> None:
     """Case 8: a second run reuses the cache, --refresh rebuilds"""
-    assert run("uvrev-fx-app==1.0").exit_code == 0
+    assert uv_calls.run("uvrev-fx-app==1.0").exit_code == 0
     assert syncs(uv_calls) == 1
     (directory,) = tool_dirs(tool_env, "uvrev-fx-app")
     created = json.loads((directory / RECEIPT_NAME).read_text())["created"]
+    # the venv of the tool is protected like the venvs of the environments
+    assert writable_paths(directory / ".venv") == ()
+    # --refresh must also replace a venv someone made writable and changed
+    unprotect_venv(directory / ".venv", Settings())
     marker = directory / ".venv" / "marker"
     marker.touch()
 
-    assert run("uvrev-fx-app==1.0", "again").exit_code == 0
+    assert uv_calls.run("uvrev-fx-app==1.0", "again").exit_code == 0
     assert syncs(uv_calls) == 1
     assert marker.exists()
     assert tool_output(capfd)["args"] == ["again"]
 
-    assert run("--refresh", "uvrev-fx-app==1.0").exit_code == 0
+    assert uv_calls.run("--refresh", "uvrev-fx-app==1.0").exit_code == 0
     assert syncs(uv_calls) == 2
     assert not marker.exists()
+    assert writable_paths(directory / ".venv") == ()
     assert tool_dirs(tool_env, "uvrev-fx-app") == (directory,)
     assert json.loads((directory / RECEIPT_NAME).read_text())["created"] >= created
 
@@ -440,9 +460,7 @@ class TestCallerEnvironment:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="uses a shell script as fake uv")
-def test_killed_during_sync(
-    tool_env: Path, tmp_path: Path, uv_calls: list[tuple[str, ...]]
-) -> None:
+def test_killed_during_sync(tool_env: Path, tmp_path: Path, uv_calls: UvSpy) -> None:
     """Case 10: a run killed during uv sync leaves no receipt, the next one rebuilds"""
     real_uv = shutil.which("uv")
     assert real_uv is not None
@@ -484,7 +502,7 @@ def test_killed_during_sync(
     assert (directory / "uv.lock").is_file()
     assert not (directory / RECEIPT_NAME).exists()
 
-    result = run("uvrev-fx-app==1.0")
+    result = uv_calls.run("uvrev-fx-app==1.0")
     assert result.exit_code == 0, result.output
     assert syncs(uv_calls) == 1
     assert (directory / RECEIPT_NAME).is_file()
@@ -501,7 +519,7 @@ class TestWheelPathOrUrl:
         tmp_path: Path,
         tool_env: Path,
         capfd: pytest.CaptureFixture[str],
-        uv_calls: list[tuple[str, ...]],
+        uv_calls: UvSpy,
     ) -> None:
         wheel = tmp_path / app_wheel(find_links).name
         shutil.copyfile(app_wheel(find_links), wheel)
@@ -510,7 +528,7 @@ class TestWheelPathOrUrl:
             spec = wheel.as_uri()
 
         # without --from the command is the package name
-        result = run(spec, "a")
+        result = uv_calls.run(spec, "a")
 
         assert result.exit_code == 0, result.output
         assert tool_output(capfd)["args"] == ["a"]
@@ -528,17 +546,17 @@ class TestWheelPathOrUrl:
         tmp_path: Path,
         tool_env: Path,
         capfd: pytest.CaptureFixture[str],
-        uv_calls: list[tuple[str, ...]],
+        uv_calls: UvSpy,
     ) -> None:
         """A wheel rebuilt with the same version gets its own environment"""
         wheel = tmp_path / app_wheel(find_links).name
         shutil.copyfile(app_wheel(find_links), wheel)
-        assert run(str(wheel)).exit_code == 0
+        assert uv_calls.run(str(wheel)).exit_code == 0
         assert tool_output(capfd)["modules"]["idna"] is False
         assert syncs(uv_calls) == 1
 
         shutil.copyfile(rebuilt_wheel, wheel)
-        assert run(str(wheel)).exit_code == 0
+        assert uv_calls.run(str(wheel)).exit_code == 0
         assert tool_output(capfd)["modules"]["idna"] is True
         assert syncs(uv_calls) == 2
         assert len(tool_dirs(tool_env, "uvrev-fx-app")) == 2
@@ -546,7 +564,7 @@ class TestWheelPathOrUrl:
         # both are cached
         for source, idna in ((app_wheel(find_links), False), (rebuilt_wheel, True)):
             shutil.copyfile(source, wheel)
-            assert run(str(wheel)).exit_code == 0
+            assert uv_calls.run(str(wheel)).exit_code == 0
             assert tool_output(capfd)["modules"]["idna"] is idna
         assert syncs(uv_calls) == 2
 
@@ -558,7 +576,7 @@ class TestWheelPathOrUrl:
         wheel_server: str,
         tool_env: Path,
         capfd: pytest.CaptureFixture[str],
-        uv_calls: list[tuple[str, ...]],
+        uv_calls: UvSpy,
     ) -> None:
         url = f"{wheel_server}/{app_wheel(find_links).name}"
         spec = url
@@ -566,7 +584,9 @@ class TestWheelPathOrUrl:
             spec = f"uvrev-fx-app @ {url}"
 
         for args in (("first",), ("cached",)):
-            result = run("--from", spec, "--extra", "idn", "uvrev-fx-app", *args)
+            result = uv_calls.run(
+                "--from", spec, "--extra", "idn", "uvrev-fx-app", *args
+            )
             assert result.exit_code == 0, result.output
             output = tool_output(capfd)
             assert output["args"] == list(args)
@@ -580,18 +600,18 @@ class TestWheelPathOrUrl:
         find_links: Path,
         wheel_server: str,
         capfd: pytest.CaptureFixture[str],
-        uv_calls: list[tuple[str, ...]],
+        uv_calls: UvSpy,
     ) -> None:
         wheel = app_wheel(find_links)
         url = f"{wheel_server}/{wheel.name}"
         digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
 
-        wrong = run(f"{url}#sha256={'0' * 64}")
+        wrong = uv_calls.run(f"{url}#sha256={'0' * 64}")
         assert wrong.exit_code == 1
         assert f"is {digest}, but {'0' * 64} was expected" in wrong.stderr
         assert syncs(uv_calls) == 0
 
-        result = run(f"{url}#sha256={digest}", "ok")
+        result = uv_calls.run(f"{url}#sha256={digest}", "ok")
         assert result.exit_code == 0, result.output
         assert "integrity is not verified" not in result.stderr
         assert tool_output(capfd)["args"] == ["ok"]

@@ -62,9 +62,10 @@ uvrev --help
 
 | Command            | Description |
 |--------------------|-------------|
-| `uvrev env create` | Create a new UV project with revision tracking |
+| `uvrev env create` | Create a new UV project with revision tracking (does nothing if it exists) |
 | `uvrev env list`   | List all UV projects |
-| `uvrev add`        | Add packages to the current project |
+| `uvrev env fix`    | Mark an environment as created successfully (see [Creating Environments](#creating-environments)) |
+| `uvrev add`        | Add packages to the current project (`--upgrade-all` also upgrades all others, `--python` changes the Python version) |
 | `uvrev remove`     | Remove packages from the current project |
 | `uvrev sync`       | Sync project dependencies |
 | `uvrev upgrade`    | Upgrade all or the given packages |
@@ -75,6 +76,83 @@ uvrev --help
 | `uvrev path`       | Show the path to the current project |
 | `uvrev run`        | Run uv commands in the project |
 | `uvrev tool run`   | Run a tool like `uvx`, with the dependencies locked in its release |
+| `uvrev protect`    | Make the venv read-only |
+| `uvrev unprotect`  | Make the venv writable |
+| `uvrev verify`     | Check the venv against the installed packages, `--fix` repairs it |
+| `uvrev settings`   | Show the settings and the location of the settings file |
+
+---
+
+## Protected Environments
+
+By default the `.venv` of an environment is **read-only**: uvrev runs `chmod -R a-w .venv`,
+which removes all write permissions and keeps read and execute permissions as they are.
+So nobody can change the installed packages by accident, e.g. with `pip install` or an editor.
+
+uvrev makes the `.venv` writable (`chmod -R u+w .venv`) only while `uv` changes it and protects it
+again afterwards, even if `uv` fails. `uvrev run` syncs the environment first if needed and then
+runs the command with the protected `.venv`. The environments of `uvrev tool run` are protected as well.
+
+```bash
+uvrev unprotect   # make the .venv writable, e.g. to debug something
+uvrev protect     # make it read-only again (the next change protects it anyway)
+```
+
+uv hardlinks the installed files from its cache, so `chmod` also changes the permissions of
+these files in the uv cache, and with that in other environments using the same files.
+If that is a problem, disable the protection or use other modes (see [Settings](#settings)).
+
+The protection needs the `chmod` command. If it is missing, uvrev stops with an error
+explaining how to disable the protection.
+
+## Verify Environments
+
+`uvrev verify` compares the `.venv` with the `RECORD` files of the installed packages and finds
+
+- missing or modified files,
+- packages not in sync with `uv.lock`,
+- files not installed by any package (only a warning).
+
+`uvrev verify` exits with `1` if problems were found.
+`uvrev verify --fix` removes the affected packages from the uv cache (`uv cache clean --force`),
+reinstalls them and protects the `.venv` again (if enabled).
+
+uv hardlinks the installed files from its cache, so a file changed in a `.venv` is changed in the
+cache as well, and in all other environments using it ([uv#22979](https://github.com/astral-sh/uv/issues/22979)).
+Reinstalling alone would link the changed file again, so the cache entry is removed first.
+Other environments sharing the changed file are only repaired by running `uvrev verify --fix` for them, too.
+Files not installed by any package are only reported, as they might be someone's work.
+
+To verify and fix the environment after every change, pass `--verify` to
+`add`, `remove`, `sync`, `upgrade`, `upgrade-python` and `restore`, or enable `verify_after_change`.
+
+## Settings
+
+uvrev reads its settings from the `[uvrev]` table of a TOML file in the user config directory,
+e.g. `~/.config/uvrev/config.toml` on Linux (`uvrev settings` shows the exact location).
+`UVREV_SETTINGS` can list additional settings files (separated by `:`).
+
+```toml
+[uvrev]
+# Make the .venv read-only, so it can only be changed by uvrev
+protect = true
+# Command used to change the permissions (name or path)
+chmod_command = "chmod"
+# Mode for `chmod -R <mode> .venv` to protect the .venv
+protect_mode = "a-w"
+# Mode for `chmod -R <mode> .venv` to make the .venv writable again
+unprotect_mode = "u+w"
+# Compile bytecode on install, a protected .venv can not cache it later
+compile_bytecode = true
+# Python versions (major.minor) the environments are resolved for,
+# by default the Python versions installed for uv (see Supported Environments)
+python_versions_supported = ["3.12", "3.14"]
+# Run `uvrev verify --fix` after every change of an environment
+verify_after_change = false
+```
+
+Each setting can be overridden by an environment variable, e.g. `UVREV_PROTECT=false`
+or `UVREV_PYTHON_VERSIONS_SUPPORTED=3.12:3.14` (`3.12,3.14` works as well).
 
 ---
 
@@ -93,6 +171,7 @@ uvrev add pandas numpy --json
   "status": "success",
   "command": "add",
   "arguments": ["pandas", "numpy"],
+  "options": {"upgrade_all": false, "python": null},
   "revision": 42,
   "previous_revision": 41,
   "changes": {"added": ["numpy", "pandas", "pytz"], "updated": ["python-dateutil"], "downgraded": [], "removed": []},
@@ -112,6 +191,7 @@ uvrev add pandas numpy --json
     }
   },
   "python": null,
+  "environments": null,
   "error_message": null
 }
 ```
@@ -122,6 +202,7 @@ uvrev add pandas numpy --json
 | `status` | `string` | `"success"` or `"error"`. |
 | `command` | `string` | The executed subcommand. |
 | `arguments` | `array[string]` | The arguments given to the subcommand. |
+| `options` | `object` | The options given to the subcommand, e.g. `{"upgrade_all": true, "python": null}` for `uvrev add --upgrade-all`. Empty for commands without options. |
 | `revision` | `integer \| null` | Current revision after the command (unchanged if nothing changed). `null` only if it could not be determined. |
 | `previous_revision` | `integer \| null` | Revision before the command. A new revision was created if it differs from `revision`. |
 | `changes` | `object` | Changed packages (`added`, `updated`, `downgraded`, `removed`), including transitive ones. Taken from `uv.lock`, for `sync` from the installed packages. `updated` contains the upgrades, `downgraded` the packages whose version decreased. Every package is in one list only. |
@@ -131,6 +212,7 @@ uvrev add pandas numpy --json
 | `versions.packages` | `object` | For every changed package the `old` and `new` version. `null` means absent (added or removed). |
 | `versions.dependencies` | `object` | For every changed dependency the `old` and `new` specifier. `""` means no version constraint, `null` means absent. |
 | `python` | `object \| null` | `old` and `new` exact version of the Python interpreter, if it changed. `null` if it did not change. |
+| `environments` | `object \| null` | `old` and `new` markers of `tool.uv.environments` (arrays of strings), if they changed. `null` if they did not change. See [Supported Environments](#supported-environments). |
 | `error_message` | `string \| null` | The error, if `status` is `"error"`. |
 
 All package names are [normalized](https://packaging.python.org/en/latest/specifications/name-normalization/) and sorted.
@@ -156,6 +238,8 @@ Every revision lists what changed compared to the previous one:
 
 ```text
 (rev 3) Upgraded Python: 3.12 → 3.13
+  Environments:
+    +python_version == '3.13' and sys_platform == 'linux' and platform_machine == 'x86_64'
   Python:
     ^python==3.12.3 → python==3.13.1
   Pinned Versions:
@@ -187,13 +271,61 @@ Use `uvrev upgrade-python` to change the minor version:
 uvrev upgrade-python 3.14
 ```
 
-It pins the version in `.python-version`, sets `requires-python` to `>=3.14`,
-recreates the virtual environment and updates `uv.lock`.
+It pins the version with `uv python pin`, recreates the virtual environment and updates `uv.lock`.
+`requires-python` is not changed, `uv python pin` refuses versions that don't match it.
 Going back to an older version works the same way, `uvrev restore` restores the pinned version as well.
+
+`uvrev add --python 3.14 <pkg>...` adds packages and changes the Python version in one revision.
+It runs `uv add --raw --python 3.14 <pkg>...` and then `uv python pin 3.14`.
 
 `uvrev env create` pins the version given with `--python`.
 Without it, uv chooses its default interpreter and pins its minor version.
 `UV_PYTHON` is ignored, so an environment always uses the version of its `.python-version`.
+
+### Supported Environments
+
+uvrev resolves the packages only for the current platform and the supported Python versions,
+by setting [`tool.uv.environments`](https://docs.astral.sh/uv/concepts/resolution/#limited-resolution-environments) in `pyproject.toml`:
+
+```toml
+[tool.uv]
+environments = [
+    "python_version == '3.12' and sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "python_version == '3.14' and sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+```
+
+- `sys_platform` and `platform_machine` are taken from the Python interpreter running uvrev.
+- The Python versions are taken from the setting `python_versions_supported`
+  (environment variable `UVREV_PYTHON_VERSIONS_SUPPORTED`, see [Settings](#settings)).
+  If it is not set, the Python versions installed for uv are used (`uv python list --only-installed`).
+- Only versions matching `requires-python` are used, as uv rejects the others.
+  If no version is left, `tool.uv.environments` is removed.
+
+`add`, `remove`, `upgrade` and `upgrade-python` update `tool.uv.environments` first, if needed.
+The change is part of the new revision (`Environments` in the changelog, `environments` in the JSON report).
+`sync` and `restore` don't change it, so a restored revision is resolved exactly as before.
+
+The pinned Python version must be one of the supported versions, otherwise uv fails.
+Install it (e.g. `uv python install 3.14`) or add it to the setting `python_versions_supported`.
+The lock file is only valid on the platform it was created on.
+
+---
+
+## Creating Environments
+
+`uvrev env create` writes `.uvrev_created_successfully` (containing the uvrev version) as its last step.
+The file is ignored by git (`.git/info/exclude`).
+
+- If the environment was created successfully before, `uvrev env create` does nothing.
+  The `--python` version is **not** checked against the existing environment.
+- If the folder exists without the file (e.g. an aborted `uvrev env create`), it fails.
+  `uvrev env create --force` deletes the folder and creates the environment again.
+- Commands using an environment without the file warn about it.
+
+**Warning:** environments created by uvrev before 0.4 don't have the file,
+so `--force` deletes them including their history.
+Mark them with `uvrev env fix <name>` first.
 
 ---
 
@@ -269,6 +401,12 @@ source "$(uvrev path -e myproject)/.venv/bin/activate"
 
 uvrev add pandas numpy
 uvrev add requests
+
+# make sure pandas and numpy are installed and upgrade everything
+uvrev add --upgrade-all pandas numpy
+
+# add polars and change to Python 3.14
+uvrev add --python 3.14 polars
 
 uvrev list
 uvrev history

@@ -17,7 +17,8 @@ import shutil
 import subprocess
 import tempfile
 import tomllib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from importlib import metadata
@@ -40,8 +41,10 @@ from packaging.utils import (
 from packaging.version import Version
 from platformdirs import user_cache_path
 
-from .commands import show_cmd, uv_tool
+from .commands import UvRunner, show_cmd, uv_tool
 from .exceptions import ToolError
+from .protection import writable
+from .settings import Settings
 from .terminal import warning
 from .types import SubprocessFailure
 
@@ -362,7 +365,12 @@ def download(
         raise ToolError(f"Can not download the wheel {url}: {e}") from None
 
 
-def fetch_wheel(wheel: WheelLocation, directory: Path) -> Path:
+type Downloader = Callable[[str, Path], None]
+
+
+def fetch_wheel(
+    wheel: WheelLocation, directory: Path, download_file: Downloader = download
+) -> Path:
     """Copy or download the wheel into the directory.
 
     The snapshot is hashed and installed, so a wheel that is rebuilt or replaced
@@ -376,7 +384,7 @@ def fetch_wheel(wheel: WheelLocation, directory: Path) -> Path:
                 "#sha256=<hex> in the URL, so its integrity is not verified"
             )
         show_cmd(("download", wheel.source))
-        download(wheel.source, target)
+        download_file(wheel.source, target)
     else:
         try:
             shutil.copyfile(Path(wheel.source).expanduser(), target)
@@ -386,12 +394,17 @@ def fetch_wheel(wheel: WheelLocation, directory: Path) -> Path:
 
 
 def tool_request(
-    spec: ToolSpec, extras: Sequence[str], python: str | None, directory: Path
+    spec: ToolSpec,
+    extras: Sequence[str],
+    python: str | None,
+    directory: Path,
+    uv: UvRunner = uv_tool,
+    download_file: Downloader = download,
 ) -> ToolRequest:
     """Resolve the version or fetch the wheel (into the directory)"""
     normalized_extras = normalize_extras(extras)
     if spec.wheel is not None:
-        wheel = fetch_wheel(spec.wheel, directory)
+        wheel = fetch_wheel(spec.wheel, directory, download_file)
         digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
         if spec.wheel.sha256 is not None and digest != spec.wheel.sha256:
             raise ToolError(
@@ -408,7 +421,7 @@ def tool_request(
             origin=spec.wheel.source,
         )
     if spec.version is None:
-        version = resolve_version(spec.name, python)
+        version = resolve_version(spec.name, python, uv)
     else:
         version = spec.version
     return ToolRequest(spec.name, version, normalized_extras, python)
@@ -472,12 +485,14 @@ def uv_environment(venv: Path | None = None) -> Mapping[str, str]:
     return MappingProxyType(env)
 
 
-def resolve_version(name: NormalizedName, python: str | None) -> Version:
+def resolve_version(
+    name: NormalizedName, python: str | None, uv: UvRunner = uv_tool
+) -> Version:
     """Resolve the latest version with uv's index configuration and credentials"""
     python_args: tuple[str, ...] = ()
     if python is not None:
         python_args = ("--python", python)
-    output = uv_tool(
+    output = uv(
         "pip",
         "compile",
         "-",
@@ -579,13 +594,13 @@ def check_embedded(
         )
 
 
-def get_uv_version(env: Mapping[str, str]) -> str:
+def get_uv_version(env: Mapping[str, str], uv: UvRunner = uv_tool) -> str:
     """Version of uv
 
     >>> get_uv_version(os.environ).count(".") >= 1
     True
     """
-    output = uv_tool("--version", env=env, capture_stdout=True)
+    output = uv("--version", env=env, capture_stdout=True)
     return output.strip().removeprefix("uv ").split(" ")[0]
 
 
@@ -604,12 +619,15 @@ def has_receipt(directory: Path, request: ToolRequest) -> bool:
 
 
 def sync_dependencies(
-    directory: Path, request: ToolRequest, env: Mapping[str, str]
+    directory: Path,
+    request: ToolRequest,
+    env: Mapping[str, str],
+    uv: UvRunner = uv_tool,
 ) -> None:
     """Install the locked dependencies without the project itself"""
     extra_args = tuple(chain.from_iterable(("--extra", e) for e in request.extras))
     try:
-        uv_tool(
+        uv(
             "sync",
             "--project",
             str(directory),
@@ -631,14 +649,22 @@ def sync_dependencies(
         raise
 
 
-def build_environment(directory: Path, request: ToolRequest) -> None:
+def build_environment(
+    directory: Path, request: ToolRequest, settings: Settings, uv: UvRunner = uv_tool
+) -> None:
     """Build the environment in place (venvs are not relocatable)"""
     directory.mkdir(parents=True)
     venv = directory / ".venv"
-    env = uv_environment(venv)
+    env = MappingProxyType(
+        {
+            **uv_environment(venv),
+            # a protected venv can not cache bytecode later
+            "UV_COMPILE_BYTECODE": str(settings.compile_bytecode).lower(),
+        }
+    )
 
     with tempfile.TemporaryDirectory(prefix="uvrev-tool-") as target:
-        uv_tool(
+        uv(
             "pip",
             "install",
             "--no-deps",
@@ -656,10 +682,10 @@ def build_environment(directory: Path, request: ToolRequest) -> None:
     directory.joinpath("pyproject.toml").write_bytes(embedded.pyproject)
     directory.joinpath("uv.lock").write_bytes(embedded.lock)
 
-    sync_dependencies(directory, request, env)
+    sync_dependencies(directory, request, env, uv)
 
     # after the sync, as uv sync is exact and would remove the package again
-    uv_tool(
+    uv(
         "pip",
         "install",
         "--python",
@@ -670,7 +696,7 @@ def build_environment(directory: Path, request: ToolRequest) -> None:
         request.install_source,
         env=env,
     )
-    uv_tool("pip", "check", "--python", str(venv), env=env)
+    uv("pip", "check", "--python", str(venv), env=env)
 
     Receipt(
         package=request.name,
@@ -681,29 +707,56 @@ def build_environment(directory: Path, request: ToolRequest) -> None:
         pyproject_sha256=hashlib.sha256(embedded.pyproject).hexdigest(),
         extras=request.extras,
         python=request.python,
-        uv_version=get_uv_version(env),
+        uv_version=get_uv_version(env, uv),
         created=datetime.now(UTC).isoformat(timespec="seconds"),
     ).write(directory)
 
 
-def ensure_environment(request: ToolRequest, refresh: bool) -> Path:
-    """Get the directory of a complete environment, build it if necessary"""
+type Builder = Callable[[Path, ToolRequest, Settings, UvRunner], None]
+type LockFactory = Callable[[Path], AbstractContextManager[object]]
+
+
+@dataclass(frozen=True)
+class ToolServices:
+    """External services of ``uvrev tool run``, tests can replace them"""
+
+    uv: UvRunner = uv_tool
+    download: Downloader = download
+    build: Builder = build_environment
+    # lock of an environment, so parallel runs don't build it twice
+    lock: LockFactory = FileLock
+
+
+def ensure_environment(
+    request: ToolRequest,
+    refresh: bool,
+    settings: Settings | None = None,
+    services: ToolServices | None = None,
+) -> Path:
+    """Get the directory of a complete environment, build it if necessary.
+
+    The venv of the tool is protected like the venvs of the environments.
+    """
+    settings = settings or Settings()
+    services = services or ToolServices()
     directory = tool_directory(request)
     if not refresh and has_receipt(directory, request):
         return directory
 
     directory.parent.mkdir(parents=True, exist_ok=True)
     # the lock is next to the directory, as the directory is deleted on failure
-    with FileLock(directory.parent / f"{directory.name}.lock"):
+    with services.lock(directory.parent / f"{directory.name}.lock"):
         if not refresh and has_receipt(directory, request):
             # built by a parallel run while waiting for the lock
             return directory
-        shutil.rmtree(directory, ignore_errors=True)
-        try:
-            build_environment(directory, request)
-        except BaseException:
+        # a protected venv can only be deleted when it is writable
+        with writable(directory / ".venv", settings):
             shutil.rmtree(directory, ignore_errors=True)
-            raise
+            try:
+                services.build(directory, request, settings, services.uv)
+            except BaseException:
+                shutil.rmtree(directory, ignore_errors=True)
+                raise
     return directory
 
 
@@ -743,6 +796,8 @@ def run_tool(
     extras: Sequence[str],
     python: str | None,
     refresh: bool,
+    settings: Settings | None = None,
+    services: ToolServices | None = None,
 ) -> int:
     """Install the tool with its locked dependencies and run it.
 
@@ -759,9 +814,12 @@ def run_tool(
             f"COMMAND must be the name of a console script, not '{command}'"
         )
 
+    services = services or ToolServices()
     with tempfile.TemporaryDirectory(prefix="uvrev-wheel-") as directory:
-        request = tool_request(spec, extras, python, Path(directory))
-        venv = ensure_environment(request, refresh) / ".venv"
+        request = tool_request(
+            spec, extras, python, Path(directory), services.uv, services.download
+        )
+        venv = ensure_environment(request, refresh, settings, services) / ".venv"
     executable = script_path(venv, command)
     if not executable.is_file():
         scripts = console_scripts(venv, request.name)

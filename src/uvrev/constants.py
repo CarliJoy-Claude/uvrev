@@ -6,3 +6,5 @@ INITIAL_COMMIT_MSG: Final[str] = "(rev 0) Initial project creation"
 PYTHON_VERSION_FILE: Final[str] = ".python-version"
 # exact version of the Python interpreter used by the environment, written by uvrev
 PYTHON_VERSION_LOCK_FILE: Final[str] = ".python-version.lock"
+# written as the last step of ``uvrev env create``, contains the uvrev version
+CREATED_MARKER_FILE: Final[str] = ".uvrev_created_successfully"
