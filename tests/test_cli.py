@@ -708,6 +708,9 @@ class TestAddUpgradeAll:
 
         assert result.exit_code == 0
         assert "Created revision 2" in result.output
+        # added with --upgrade, so locked versions don't block the new package
+        assert "uv add --raw --upgrade peppercorn" in result.output
+        assert "uv sync --upgrade" in result.output
         report = parse_report(result)
         assert report["command"] == "add"
         assert report["arguments"] == ["peppercorn"]

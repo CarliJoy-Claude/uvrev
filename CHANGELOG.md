@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `uvrev add --upgrade-all` adds the given packages and upgrades all packages in one revision,
   e.g. to make sure some packages are installed while keeping the environment up to date.
-  It runs `uv add --raw` followed by `uv sync --upgrade`.
+  It runs `uv add --raw --upgrade` followed by `uv sync --upgrade`.
 - `uvrev add --python <version>` adds the given packages and changes the Python version in one revision.
   It runs `uv add --raw --python <version>` followed by `uv python pin <version>`.
 - `tool.uv.environments` is set in `pyproject.toml`, so packages are only resolved for the current platform

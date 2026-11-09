@@ -487,7 +487,9 @@ def add_packages(
     Args:
         project: Project to add packages to.
         packages: Requirements to add.
-        upgrade_all: Run ``uv sync --upgrade`` after adding the packages.
+        upgrade_all: Add with ``uv add --upgrade`` (so a package needing newer
+            versions of locked packages can be added) and run ``uv sync --upgrade``
+            afterwards, so everything is upgraded.
         python: Python version for ``uv add --python``, pinned afterwards
             with ``uv python pin``.
 
@@ -499,6 +501,7 @@ def add_packages(
         uv(
             "add",
             "--raw",
+            *(("--upgrade",) if upgrade_all else ()),
             *(("--python", python) if python else ()),
             *packages,
             project=project,

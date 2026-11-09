@@ -343,7 +343,7 @@ def env_list() -> None:
     "--upgrade-all",
     is_flag=True,
     default=False,
-    help="Run 'uv sync --upgrade' after adding the packages",
+    help="Add with 'uv add --upgrade' and run 'uv sync --upgrade' afterwards",
 )
 @click.option(
     "--python",
