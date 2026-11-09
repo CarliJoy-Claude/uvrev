@@ -12,6 +12,9 @@ from .types import Revision
 
 SCHEMA_VERSION: Final[int] = 2
 
+# value of a command line option in the report
+type Option = bool | str | None
+
 
 @dataclass(frozen=True)
 class RevisionChange:
@@ -22,6 +25,7 @@ class RevisionChange:
     packages: Diff[Version] = field(default_factory=Diff)
     dependencies: Diff[SpecifierSet | None] = field(default_factory=Diff)
     python: Diff[Version] = field(default_factory=Diff)
+    environments: Diff[None] = field(default_factory=Diff)
 
     @property
     def created(self) -> bool:
@@ -38,6 +42,27 @@ class Versions:
 
 
 @dataclass(frozen=True)
+class EnvironmentsChange:
+    """Old and new markers of ``tool.uv.environments``"""
+
+    old: tuple[str, ...]
+    new: tuple[str, ...]
+
+    @classmethod
+    def from_diff(cls, diff: Diff[None]) -> Self | None:
+        """None if the environments did not change.
+
+        >>> EnvironmentsChange.from_diff(Diff({"a": None}, {"a": None, "b": None}))
+        EnvironmentsChange(old=('a',), new=('a', 'b'))
+        >>> EnvironmentsChange.from_diff(Diff()) is None
+        True
+        """
+        if not diff:
+            return None
+        return cls(old=tuple(diff.old), new=tuple(diff.new))
+
+
+@dataclass(frozen=True)
 class Report:
     """JSON report of a command, the field order is the order in the JSON"""
 
@@ -45,7 +70,7 @@ class Report:
     status: Literal["success", "error"]
     command: str
     arguments: tuple[str, ...]
-    options: Mapping[str, bool]
+    options: Mapping[str, Option]
     revision: Revision | None
     previous_revision: Revision | None
     changes: Changes
@@ -54,6 +79,7 @@ class Report:
     all_changed_dependencies: Names
     versions: Versions
     python: VersionChange | None
+    environments: EnvironmentsChange | None
     error_message: str | None
 
     @classmethod
@@ -62,7 +88,7 @@ class Report:
         command: str,
         arguments: tuple[str, ...],
         change: RevisionChange,
-        options: Mapping[str, bool] | None = None,
+        options: Mapping[str, Option] | None = None,
     ) -> Self:
         """Build the report of a successful command.
 
@@ -70,7 +96,7 @@ class Report:
             command: Executed subcommand.
             arguments: Arguments given to the subcommand.
             change: Outcome of the command.
-            options: Flags given to the subcommand, e.g. ``{"upgrade_all": True}``.
+            options: Options given to the subcommand, e.g. ``{"upgrade_all": True}``.
 
         Examples:
             >>> change = RevisionChange(
@@ -110,6 +136,7 @@ class Report:
                 dependencies=change.dependencies.versions(),
             ),
             python=change.python.versions().get(canonicalize_name("python")),
+            environments=EnvironmentsChange.from_diff(change.environments),
             error_message=None,
         )
 
@@ -120,7 +147,7 @@ class Report:
         arguments: tuple[str, ...],
         revision: Revision | None,
         error_message: str,
-        options: Mapping[str, bool] | None = None,
+        options: Mapping[str, Option] | None = None,
     ) -> Self:
         """Build the report of a failed command.
 
@@ -129,7 +156,7 @@ class Report:
             arguments: Arguments given to the subcommand.
             revision: Current (unchanged) revision, None if it could not be determined.
             error_message: Error that occurred.
-            options: Flags given to the subcommand, e.g. ``{"upgrade_all": True}``.
+            options: Options given to the subcommand, e.g. ``{"upgrade_all": True}``.
 
         Examples:
             >>> report = Report.from_error("add", ("nope",), Revision(2), "boom")
@@ -155,6 +182,7 @@ class Report:
             all_changed_dependencies=(),
             versions=Versions(packages={}, dependencies={}),
             python=None,
+            environments=None,
             error_message=error_message,
         )
 
@@ -189,6 +217,7 @@ class Report:
             "dependencies": {}
           },
           "python": null,
+          "environments": null,
           "error_message": "boom"
         }
         """

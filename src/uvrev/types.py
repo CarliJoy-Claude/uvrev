@@ -42,6 +42,14 @@ class UVRevProject:
     def venv_path(self) -> Path:
         return self.project_path / ".venv"
 
+    @property
+    def created_marker_path(self) -> Path:
+        """Exists if the environment was created completely"""
+        return self.project_path / constants.CREATED_MARKER_FILE
+
+    def created_successfully(self) -> bool:
+        return self.created_marker_path.exists()
+
     def exists(self) -> bool:
         """
         Check if project exists

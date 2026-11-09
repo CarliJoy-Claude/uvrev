@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from typing import Any
 
 from packaging.specifiers import SpecifierSet
 from packaging.utils import NormalizedName
@@ -227,6 +228,7 @@ def create_changelog(
     dependencies: Diff[SpecifierSet | None],
     packages: Diff[Version],
     python: Diff[Version] | None = None,
+    environments: Diff[None] | None = None,
 ) -> str:
     """Create a formatted changelog from dependency and lockfile diffs.
 
@@ -234,10 +236,11 @@ def create_changelog(
         dependencies: Diff of the dependency constraints (pyproject.toml).
         packages: Diff of the pinned package versions (uv.lock).
         python: Diff of the Python interpreter version (``python`` -> version).
+        environments: Diff of the markers in ``tool.uv.environments``.
 
     Returns:
-        Formatted changelog string with Python, Dependencies and Pinned Versions
-        sections, each only if something changed.
+        Formatted changelog string with Environments, Python, Dependencies and
+        Pinned Versions sections, each only if something changed.
 
     Examples:
         >>> deps = Diff({'pandas': None}, {'pandas': None, 'numpy': None})
@@ -258,11 +261,21 @@ def create_changelog(
             vpandas==2.0.0 → pandas==1.0.0
         <BLANKLINE>
 
+        >>> envs = Diff({"python_version == '3.12'": None},
+        ...             {"python_version == '3.14'": None})
+        >>> print(create_changelog(Diff(), Diff(), environments=envs))
+        <BLANKLINE>
+          Environments:
+            +python_version == '3.14'
+            -python_version == '3.12'
+        <BLANKLINE>
+
         >>> # No changes case
         >>> print(create_changelog(Diff(), Diff()))
         (no changes)
     """
-    sections = (
+    sections: tuple[tuple[str, Diff[Any]], ...] = (
+        ("Environments", environments or Diff[None]()),
         ("Python", python or Diff[Version]()),
         ("Dependencies", dependencies),
         ("Pinned Versions", packages),

@@ -79,7 +79,12 @@ def git(
     return None
 
 
-def uv(*args: str, project: UVRevProject, keep_stdout: bool = False) -> None:
+def uv(
+    *args: str,
+    project: UVRevProject,
+    keep_stdout: bool = False,
+    capture_output: bool = False,
+) -> str:
     """
     Execute uv command in project directory
 
@@ -87,6 +92,10 @@ def uv(*args: str, project: UVRevProject, keep_stdout: bool = False) -> None:
         *args: UV command arguments
         project: Project to run command in
         keep_stdout: If True, the command writes to stdout, otherwise to stderr
+        capture_output: If True, capture and return stdout
+
+    Returns:
+        Command stdout if capture_output=True, otherwise an empty string
     """
     show_cwd_change(project.project_path)
     cmd = ("uv", *args)
@@ -97,16 +106,23 @@ def uv(*args: str, project: UVRevProject, keep_stdout: bool = False) -> None:
     # otherwise uv would recreate the environment with another interpreter
     for var in ("VIRTUAL_ENV", "UV_PYTHON"):
         env.pop(var, None)
+    stdout: int | None = STDERR_FD
+    if capture_output:
+        stdout = subprocess.PIPE
+    elif keep_stdout:
+        stdout = None
     try:
-        subprocess.run(
+        result = subprocess.run(
             cmd,
             cwd=project.project_path,
             check=True,
             env=env,
-            stdout=None if keep_stdout else STDERR_FD,
+            stdout=stdout,
+            text=True,
         )
     except subprocess.CalledProcessError as e:
         raise SubprocessFailure(e) from e
+    return result.stdout if capture_output else ""
 
 
 def uv_tool(

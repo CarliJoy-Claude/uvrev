@@ -4,18 +4,33 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.4] (2026-11-08)
+## [0.4] (2026-11-09)
 
 ### Added
 
 - `uvrev add --upgrade-all` adds the given packages and upgrades all packages in one revision,
   e.g. to make sure some packages are installed while keeping the environment up to date.
   It runs `uv add --raw` followed by `uv sync --upgrade`.
-  If the upgrade fails, the files are reset to the last revision.
-- `options` field in the JSON report with the flags of the command, e.g. `{"upgrade_all": true}`.
+- `uvrev add --python <version>` adds the given packages and changes the Python version in one revision.
+  It runs `uv add --raw --python <version>` followed by `uv python pin <version>`.
+- `tool.uv.environments` is set in `pyproject.toml`, so packages are only resolved for the current platform
+  and the supported Python versions (`UVREV_SUPPORT_PYTHON_VERSION` or the installed ones, matching `requires-python`).
+  `add`, `remove`, `upgrade` and `upgrade-python` update it first, if needed, `sync` and `restore` don't.
+  See the [README](README.md#supported-environments).
+- `Environments` section in the changelog of a revision and `environments` field in the JSON report.
+- `options` field in the JSON report with the options of the command, e.g. `{"upgrade_all": true, "python": null}`.
+- `uvrev env create` writes `.uvrev_created_successfully` as its last step and does nothing
+  if the environment was created successfully before (the Python version is not checked).
+  `uvrev env create --force` deletes an environment folder without this file first.
+  Commands warn about environments without it, `uvrev env fix` marks them as created successfully.
+  See the [README](README.md#creating-environments).
 
 ### Changed
 
+- `uvrev upgrade-python` runs `uv python pin` and no longer changes `requires-python`,
+  so downgrades are possible as long as the version matches `requires-python`.
+- The first revision (`rev_0`) is an annotated tag like all other revisions.
+- If `add`, `remove` or `upgrade` fail, the files are reset to the last revision.
 - `httpx2` is required without a minimum version.
 
 ## [0.3] (2026-11-01)

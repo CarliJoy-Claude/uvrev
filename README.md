@@ -62,9 +62,10 @@ uvrev --help
 
 | Command            | Description |
 |--------------------|-------------|
-| `uvrev env create` | Create a new UV project with revision tracking |
+| `uvrev env create` | Create a new UV project with revision tracking (does nothing if it exists) |
 | `uvrev env list`   | List all UV projects |
-| `uvrev add`        | Add packages to the current project (`--upgrade-all` also upgrades all others) |
+| `uvrev env fix`    | Mark an environment as created successfully (see [Creating Environments](#creating-environments)) |
+| `uvrev add`        | Add packages to the current project (`--upgrade-all` also upgrades all others, `--python` changes the Python version) |
 | `uvrev remove`     | Remove packages from the current project |
 | `uvrev sync`       | Sync project dependencies |
 | `uvrev upgrade`    | Upgrade all or the given packages |
@@ -93,7 +94,7 @@ uvrev add pandas numpy --json
   "status": "success",
   "command": "add",
   "arguments": ["pandas", "numpy"],
-  "options": {"upgrade_all": false},
+  "options": {"upgrade_all": false, "python": null},
   "revision": 42,
   "previous_revision": 41,
   "changes": {"added": ["numpy", "pandas", "pytz"], "updated": ["python-dateutil"], "downgraded": [], "removed": []},
@@ -113,6 +114,7 @@ uvrev add pandas numpy --json
     }
   },
   "python": null,
+  "environments": null,
   "error_message": null
 }
 ```
@@ -123,7 +125,7 @@ uvrev add pandas numpy --json
 | `status` | `string` | `"success"` or `"error"`. |
 | `command` | `string` | The executed subcommand. |
 | `arguments` | `array[string]` | The arguments given to the subcommand. |
-| `options` | `object` | The flags given to the subcommand, e.g. `{"upgrade_all": true}` for `uvrev add --upgrade-all`. Empty for commands without flags. |
+| `options` | `object` | The options given to the subcommand, e.g. `{"upgrade_all": true, "python": null}` for `uvrev add --upgrade-all`. Empty for commands without options. |
 | `revision` | `integer \| null` | Current revision after the command (unchanged if nothing changed). `null` only if it could not be determined. |
 | `previous_revision` | `integer \| null` | Revision before the command. A new revision was created if it differs from `revision`. |
 | `changes` | `object` | Changed packages (`added`, `updated`, `downgraded`, `removed`), including transitive ones. Taken from `uv.lock`, for `sync` from the installed packages. `updated` contains the upgrades, `downgraded` the packages whose version decreased. Every package is in one list only. |
@@ -133,6 +135,7 @@ uvrev add pandas numpy --json
 | `versions.packages` | `object` | For every changed package the `old` and `new` version. `null` means absent (added or removed). |
 | `versions.dependencies` | `object` | For every changed dependency the `old` and `new` specifier. `""` means no version constraint, `null` means absent. |
 | `python` | `object \| null` | `old` and `new` exact version of the Python interpreter, if it changed. `null` if it did not change. |
+| `environments` | `object \| null` | `old` and `new` markers of `tool.uv.environments` (arrays of strings), if they changed. `null` if they did not change. See [Supported Environments](#supported-environments). |
 | `error_message` | `string \| null` | The error, if `status` is `"error"`. |
 
 All package names are [normalized](https://packaging.python.org/en/latest/specifications/name-normalization/) and sorted.
@@ -158,6 +161,8 @@ Every revision lists what changed compared to the previous one:
 
 ```text
 (rev 3) Upgraded Python: 3.12 → 3.13
+  Environments:
+    +python_version == '3.13' and sys_platform == 'linux' and platform_machine == 'x86_64'
   Python:
     ^python==3.12.3 → python==3.13.1
   Pinned Versions:
@@ -189,13 +194,60 @@ Use `uvrev upgrade-python` to change the minor version:
 uvrev upgrade-python 3.14
 ```
 
-It pins the version in `.python-version`, sets `requires-python` to `>=3.14`,
-recreates the virtual environment and updates `uv.lock`.
+It pins the version with `uv python pin`, recreates the virtual environment and updates `uv.lock`.
+`requires-python` is not changed, `uv python pin` refuses versions that don't match it.
 Going back to an older version works the same way, `uvrev restore` restores the pinned version as well.
+
+`uvrev add --python 3.14 <pkg>...` adds packages and changes the Python version in one revision.
+It runs `uv add --raw --python 3.14 <pkg>...` and then `uv python pin 3.14`.
 
 `uvrev env create` pins the version given with `--python`.
 Without it, uv chooses its default interpreter and pins its minor version.
 `UV_PYTHON` is ignored, so an environment always uses the version of its `.python-version`.
+
+### Supported Environments
+
+uvrev resolves the packages only for the current platform and the supported Python versions,
+by setting [`tool.uv.environments`](https://docs.astral.sh/uv/concepts/resolution/#limited-resolution-environments) in `pyproject.toml`:
+
+```toml
+[tool.uv]
+environments = [
+    "python_version == '3.12' and sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "python_version == '3.14' and sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+```
+
+- `sys_platform` and `platform_machine` are taken from the Python interpreter running uvrev.
+- The Python versions are taken from `UVREV_SUPPORT_PYTHON_VERSION` (comma separated, e.g. `3.12,3.14`).
+  If it is not set, the Python versions installed for uv are used (`uv python list --only-installed`).
+- Only versions matching `requires-python` are used, as uv rejects the others.
+  If no version is left, `tool.uv.environments` is removed.
+
+`add`, `remove`, `upgrade` and `upgrade-python` update `tool.uv.environments` first, if needed.
+The change is part of the new revision (`Environments` in the changelog, `environments` in the JSON report).
+`sync` and `restore` don't change it, so a restored revision is resolved exactly as before.
+
+The pinned Python version must be one of the supported versions, otherwise uv fails.
+Install it (e.g. `uv python install 3.14`) or add it to `UVREV_SUPPORT_PYTHON_VERSION`.
+The lock file is only valid on the platform it was created on.
+
+---
+
+## Creating Environments
+
+`uvrev env create` writes `.uvrev_created_successfully` (containing the uvrev version) as its last step.
+The file is ignored by git (`.git/info/exclude`).
+
+- If the environment was created successfully before, `uvrev env create` does nothing.
+  The `--python` version is **not** checked against the existing environment.
+- If the folder exists without the file (e.g. an aborted `uvrev env create`), it fails.
+  `uvrev env create --force` deletes the folder and creates the environment again.
+- Commands using an environment without the file warn about it.
+
+**Warning:** environments created by uvrev before 0.4 don't have the file,
+so `--force` deletes them including their history.
+Mark them with `uvrev env fix <name>` first.
 
 ---
 
@@ -274,6 +326,9 @@ uvrev add requests
 
 # make sure pandas and numpy are installed and upgrade everything
 uvrev add --upgrade-all pandas numpy
+
+# add polars and change to Python 3.14
+uvrev add --python 3.14 polars
 
 uvrev list
 uvrev history

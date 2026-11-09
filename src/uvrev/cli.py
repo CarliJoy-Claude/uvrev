@@ -18,6 +18,7 @@ from .operations import (
     get_last_revision_number,
     list_installed_packages,
     list_projects,
+    mark_created,
     remove_packages,
     restore_revision,
     show_history,
@@ -25,7 +26,7 @@ from .operations import (
     upgrade_packages,
     upgrade_python,
 )
-from .report import Report, RevisionChange
+from .report import Option, Report, RevisionChange
 from .terminal import fatal_error, success, warning
 from .tool import run_tool
 from .types import Revision, UVRevProject
@@ -45,12 +46,26 @@ def get_base_dir() -> Path:
     return base
 
 
+INCOMPLETE_HINT = " (not created successfully, run 'uvrev env fix {name}' if it works)"
+
+
+def warn_if_incomplete(project: UVRevProject) -> None:
+    """Warn if the environment was not created successfully"""
+    if not project.created_successfully():
+        warning(
+            f"Environment {project.project_path} was not created successfully"
+            f" (missing {constants.CREATED_MARKER_FILE})."
+            f" Run 'uvrev env fix {project.project_path.name}' if it works."
+        )
+
+
 def env_option_callback(
     _ctx: click.Context | None, _param: click.Parameter | None, value: str | None
 ) -> UVRevProject:
     if value is None and (venv := os.getenv("VIRTUAL_ENV")) and venv != sys.prefix:
         proj = UVRevProject(Path(venv).parent)
         if proj.exists():
+            warn_if_incomplete(proj)
             return proj
         warning(
             f"Currently activated VIRTUAL_ENV ({venv}) is not a uvrev env. Ignoring."
@@ -64,6 +79,7 @@ def env_option_callback(
             f"❌ Project '{name}' does not exist. Create it with 'uvrev env create'",
         )
 
+    warn_if_incomplete(proj)
     return proj
 
 
@@ -98,7 +114,7 @@ def run_operation(
     arguments: tuple[str, ...],
     as_json: bool,
     operation: Callable[[], RevisionChange],
-    options: Mapping[str, bool] | None = None,
+    options: Mapping[str, Option] | None = None,
 ) -> RevisionChange:
     """Run an operation and print its JSON report if requested.
 
@@ -147,15 +163,54 @@ def env() -> None:
     default=None,
     help="Python version, if not given uv chooses its default interpreter",
 )
-def env_create(name: str | None, python: str | None) -> None:
-    """Create a new UV project with revision tracking"""
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Delete an existing folder of the environment first, "
+    "if the environment was not created successfully",
+)
+def env_create(name: str | None, python: str | None, force: bool) -> None:
+    """Create a new UV project with revision tracking
+
+    Running it again for an environment that was created successfully does
+    nothing. In this case --python is NOT checked against the environment.
+
+    An environment is created successfully, if it contains the file
+    .uvrev_created_successfully, written as the last step.
+
+    \b
+    WARNING: --force deletes the folder of the environment if this file is
+    missing. This includes environments (and their history) created by uvrev
+    versions before 0.4. Run 'uvrev env fix NAME' for those first.
+    """
     project_name = name or constants.DEFAULT_ENV
+    project = UVRevProject(get_base_dir() / project_name)
+    if project.created_successfully():
+        success(f"Project '{project_name}' already exists at {project.project_path}")
+        return
 
     try:
-        project = create_env(get_base_dir(), project_name, python)
+        create_env(get_base_dir(), project_name, python, force)
         success(f"Project '{project_name}' created at {project.project_path}")
     except FileExistsError as e:
         fatal_error(str(e))
+
+
+@env.command("fix")
+@click.argument("name", required=False)
+def env_fix(name: str | None) -> None:
+    """Mark an existing environment as created successfully
+
+    Use it for environments created by uvrev versions before 0.4, so they are
+    not deleted by 'uvrev env create --force'.
+    """
+    project_name = name or constants.DEFAULT_ENV
+    project = UVRevProject(get_base_dir() / project_name)
+    if not project.exists():
+        fatal_error(f"Project '{project_name}' does not exist")
+    mark_created(project)
+    success(f"Marked project '{project_name}' as created successfully")
 
 
 @env.command("list")
@@ -169,7 +224,10 @@ def env_list() -> None:
 
     click.echo("Projects:")
     for proj in projects:
-        click.echo(f"  • {proj}")
+        incomplete = not UVRevProject(get_base_dir() / proj).created_successfully()
+        click.echo(
+            f"  • {proj}" + (INCOMPLETE_HINT.format(name=proj) if incomplete else "")
+        )
 
 
 @cli.command()
@@ -180,23 +238,34 @@ def env_list() -> None:
     default=False,
     help="Run 'uv sync --upgrade' after adding the packages",
 )
+@click.option(
+    "--python",
+    default=None,
+    help="Python version for 'uv add --python', pinned with 'uv python pin'",
+)
 @env_option
 @json_option
 def add(
-    project: UVRevProject, packages: tuple[str, ...], upgrade_all: bool, as_json: bool
+    project: UVRevProject,
+    packages: tuple[str, ...],
+    upgrade_all: bool,
+    python: str | None,
+    as_json: bool,
 ) -> None:
     """Add packages to the current project
 
+    \b
     Examples:
         uvrev add pandas                  # Add pandas
         uvrev add --upgrade-all pandas    # Add pandas and upgrade everything
+        uvrev add --python 3.14 pandas    # Add pandas and switch to Python 3.14
     """
     change = run_operation(
         project,
         packages,
         as_json,
-        lambda: add_packages(project, packages, upgrade_all),
-        {"upgrade_all": upgrade_all},
+        lambda: add_packages(project, packages, upgrade_all, python),
+        {"upgrade_all": upgrade_all, "python": python},
     )
     if change.created:
         success(f"Created revision {change.revision}")
@@ -267,8 +336,9 @@ def python_version_callback(
 def upgrade_python_cmd(project: UVRevProject, version: str, as_json: bool) -> None:
     """Change the Python minor version of the environment
 
-    Pins VERSION in .python-version, sets requires-python to it, recreates the
-    virtual environment and updates the locked packages. Downgrades work as well.
+    Pins VERSION with 'uv python pin', recreates the virtual environment and
+    updates the locked packages. requires-python is not changed, so downgrades
+    work as well, as long as VERSION matches requires-python.
 
     Examples:
         uvrev upgrade-python 3.14
