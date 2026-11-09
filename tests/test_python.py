@@ -13,6 +13,7 @@ import uvrev.cli
 from uvrev import constants, operations
 from uvrev.commands import git
 from uvrev.io import read_pyproject
+from uvrev.protection import unprotect
 from uvrev.types import SubprocessFailure, UVRevProject
 
 
@@ -118,6 +119,7 @@ class TestPythonLock:
 
     def test_no_venv(self, project: UVRevProject) -> None:
         """Without virtual environment the recorded version is kept"""
+        unprotect(project)
         shutil.rmtree(project.venv_path)
 
         assert operations.get_python_version(project) is None
@@ -127,6 +129,7 @@ class TestPythonLock:
 
     def test_sync_reports_python(self, project: UVRevProject) -> None:
         """Syncing a removed environment reports the newly used interpreter"""
+        unprotect(project)
         shutil.rmtree(project.venv_path)
 
         result = invoke("sync", "--json")

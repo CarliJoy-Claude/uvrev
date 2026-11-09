@@ -25,7 +25,8 @@ from conftest import writable_paths
 
 from uvrev.cli import Services, cli
 from uvrev.commands import uv_tool
-from uvrev.settings import load_settings
+from uvrev.protection import unprotect_venv
+from uvrev.settings import Settings, load_settings
 from uvrev.tool import RECEIPT_NAME, ToolServices
 
 pytestmark = pytest.mark.network
@@ -408,6 +409,8 @@ def test_cache_and_refresh(
     created = json.loads((directory / RECEIPT_NAME).read_text())["created"]
     # the venv of the tool is protected like the venvs of the environments
     assert writable_paths(directory / ".venv") == ()
+    # --refresh must also replace a venv someone made writable and changed
+    unprotect_venv(directory / ".venv", Settings())
     marker = directory / ".venv" / "marker"
     marker.touch()
 

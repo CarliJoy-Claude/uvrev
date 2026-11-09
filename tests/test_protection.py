@@ -1,3 +1,4 @@
+import os
 import stat
 from pathlib import Path
 
@@ -102,6 +103,35 @@ class TestProtect:
         assert f"'{MISSING_CHMOD}' command was not found" in message
         assert "protect = false" in message
         assert "UVREV_PROTECT=false" in message
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or os.geteuid() == 0,
+    reason="root ignores file permissions (CI runs the tests as a normal user)",
+)
+class TestDenied:
+    """The protection really denies changes"""
+
+    def test_write(self, project: UVRevProject) -> None:
+        protect(project)
+
+        with pytest.raises(PermissionError):
+            (project.venv_path / "lib" / "module.py").write_text("x = 2")
+
+    def test_create_and_delete(self, project: UVRevProject) -> None:
+        protect(project)
+
+        with pytest.raises(PermissionError):
+            (project.venv_path / "lib" / "new.py").touch()
+        with pytest.raises(PermissionError):
+            (project.venv_path / "lib" / "module.py").unlink()
+
+    def test_writable_again(self, project: UVRevProject) -> None:
+        protect(project)
+
+        with writable_venv(project):
+            (project.venv_path / "lib" / "module.py").write_text("x = 2")
+            (project.venv_path / "lib" / "new.py").touch()
 
 
 class TestWritableVenv:

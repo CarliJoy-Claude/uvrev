@@ -39,7 +39,13 @@ test:
     matrix:
       - UV_PYTHON: ["3.12", "3.13", "3.14", "3.15"]
   script:
-    - uv run prek run --all-files
+    # Run the tests as a normal user: root ignores file permissions, so the
+    # protection of the venvs would not be tested. runuser keeps the
+    # environment (incl. the UV_* variables), only HOME and USER change.
+    # The user owns the project dir, which contains the uv cache.
+    - useradd --create-home uvrev-ci
+    - chown -R uvrev-ci "$CI_PROJECT_DIR"
+    - runuser -u uvrev-ci -- uv run prek run --all-files
   # Total coverage shown in merge requests, pipelines and the coverage badge
   coverage: '/^\s*TOTAL\s.*\s(\d+(?:\.\d+)?)%$/'
 
