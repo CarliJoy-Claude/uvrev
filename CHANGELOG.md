@@ -4,50 +4,51 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.4] (2026-11-09)
+## [0.4] (2026-11-10)
 
 ### Added
 
-- `uvrev add --upgrade-all` adds the given packages and upgrades all packages in one revision,
-  e.g. to make sure some packages are installed while keeping the environment up to date.
-  It runs `uv add --raw --upgrade` followed by `uv sync --upgrade`.
-- `uvrev add --python <version>` adds the given packages and changes the Python version in one revision.
-  It runs `uv add --raw --python <version>` followed by `uv python pin <version>`.
-- `tool.uv.environments` is set in `pyproject.toml`, so packages are only resolved for the current platform
-  and the supported Python versions (setting `python_versions_supported`, by default the installed ones, matching `requires-python`).
-  `add`, `remove`, `upgrade` and `upgrade-python` update it first, if needed, `sync` and `restore` don't.
-  See the [README](README.md#supported-environments).
-- `Environments` section in the changelog of a revision and `environments` field in the JSON report.
-- `options` field in the JSON report with the options of the command, e.g. `{"upgrade_all": true, "python": null}`.
-- `uvrev env create` writes `.uvrev_created_successfully` as its last step and does nothing
-  if the environment was created successfully before (the Python version is not checked).
-  `uvrev env create --force` deletes an environment folder without this file first.
-  Commands warn about environments without it, `uvrev env fix` marks them as created successfully.
-  See the [README](README.md#creating-environments).
-- The `.venv` of an environment is read-only (`chmod -R a-w .venv`), so it can not be changed by accident.
-  uvrev makes it writable (`chmod -R u+w .venv`) only while `uv` changes it, modes and command are configurable.
-  The environments of `uvrev tool run` are protected as well.
-  `uvrev protect` and `uvrev unprotect` change the protection manually.
-  See the [README](README.md#protected-environments).
-- `uvrev verify` checks the `.venv` against the `RECORD` files of the installed packages
-  and `uv.lock`, `uvrev verify --fix` repairs it. It removes the affected packages from the uv cache first,
-  as uv hardlinks files from its cache and a changed file poisons the cache as well
-  ([uv#22979](https://github.com/astral-sh/uv/issues/22979)).
-  `--verify` runs it after `add`, `remove`, `sync`, `upgrade`, `upgrade-python` and `restore`.
-- Settings file in the user config directory (e.g. `~/.config/uvrev/config.toml`, `UVREV_SETTINGS` adds files),
-  loaded with [typed-settings](https://typed-settings.readthedocs.io/).
-  `uvrev settings` shows the settings and the location of the file. See the [README](README.md#settings).
+- Protected environments: the `.venv` is read-only (`chmod -R a-w .venv`) and only writable
+  (`chmod -R u+w .venv`) while uv changes it, so it can not be changed by accident.
+  This includes the environments of `uvrev tool run`. See the [README](README.md#protected-environments).
+  - `uvrev protect` / `uvrev unprotect`: change the protection manually.
+- `uvrev verify`: checks the `.venv` against the `RECORD` files of the installed packages and against `uv.lock`.
+  See the [README](README.md#verify-environments).
+  - `--fix`: removes the broken packages from the uv cache and reinstalls them.
+    uv hardlinks files from its cache, so a file changed in a `.venv` changes the cache as well
+    ([uv#22979](https://github.com/astral-sh/uv/issues/22979)).
+  - `--verify` for `add`, `remove`, `sync`, `upgrade`, `upgrade-python` and `restore`:
+    runs `uvrev verify --fix` afterwards.
+- Settings: `[uvrev]` table in a file in the user config directory (e.g. `~/.config/uvrev/config.toml`),
+  each setting can be overridden by an environment variable (e.g. `UVREV_PROTECT=false`).
+  See the [README](README.md#settings).
+  - `uvrev settings`: shows the settings and the location of the file.
+- `uvrev add`: two new options, each in one revision:
+  - `--upgrade-all`: adds the packages and upgrades all packages (`uv add --raw --upgrade`, then `uv sync --upgrade`).
+  - `--python <version>`: adds the packages and changes the Python version (`uv add --raw --python`, then `uv python pin`).
+- `uvrev env create` does nothing for an environment that was created successfully before
+  (marked by `.uvrev_created_successfully`). See the [README](README.md#creating-environments).
+  - `--force`: deletes an environment folder without this file first.
+  - `uvrev env fix`: marks an environment of an older uvrev as created successfully.
+- `tool.uv.environments`: packages are only resolved for the current platform and the supported Python versions
+  (setting `python_versions_supported`, by default the installed ones).
+  `add`, `remove`, `upgrade` and `upgrade-python` update it. See the [README](README.md#supported-environments).
+- JSON report: new fields `environments` and `options` (the options of the command), `schema_version` stays 2.
 
 ### Changed
 
-- `UVREV_SUPPORT_PYTHON_VERSION` is now the setting `python_versions_supported` (`UVREV_PYTHON_VERSIONS_SUPPORTED`).
-- Bytecode is compiled on install (setting `compile_bytecode`), as a protected `.venv` can not cache it.
-- `uvrev run` syncs the environment first if needed and runs the command with the protected `.venv`.
-- `uvrev upgrade-python` runs `uv python pin` and no longer changes `requires-python`,
-  so downgrades are possible as long as the version matches `requires-python`.
-- The first revision (`rev_0`) is an annotated tag like all other revisions.
-- If `add`, `remove` or `upgrade` fail, the files are reset to the last revision.
+- `uvrev upgrade-python` no longer changes `requires-python` (it runs `uv python pin`), so downgrades are possible.
+- `uvrev run` syncs the environment only if needed and runs the command with the protected `.venv` (`uv run --no-sync`).
+- `add`, `remove` and `upgrade` reset the files to the last revision if uv fails.
+- uv compiles bytecode on install (setting `compile_bytecode`), as a protected `.venv` can not cache it later.
+- The first revision `rev_0` is an annotated tag like all other revisions.
 - `httpx2` is required without a minimum version.
+- CI runs the tests as a normal user, so the protection is tested for real.
+- `AGENTS.md` describes the conventions for contributors and AI agents.
+
+### Fixed
+
+- Signing a release (PEP 740 attestations) failed because of wrong `uv run` options.
 
 ## [0.3] (2026-11-01)
 
