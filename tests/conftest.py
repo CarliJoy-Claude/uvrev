@@ -42,8 +42,10 @@ def isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     for name in os.environ:
         if name.startswith("UVREV_") and name != "UVREV_BASE":
             monkeypatch.delenv(name)
-    config_file = tmp_path / "config" / "config.toml"
-    monkeypatch.setenv(settings.CONFIG_FILE_ENV, str(config_file))
+    # platformdirs uses XDG_CONFIG_HOME on Linux (CI), not on macOS or Windows
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    config_file = settings.config_file()
+    assert config_file.is_relative_to(tmp_path), "settings are not isolated"
     return config_file
 
 

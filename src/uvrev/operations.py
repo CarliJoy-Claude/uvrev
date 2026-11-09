@@ -1,5 +1,4 @@
 import contextlib
-import json
 import platform
 import re
 import shutil
@@ -9,11 +8,10 @@ from collections.abc import Iterator, Mapping
 from importlib.metadata import distributions, version as package_version
 from pathlib import Path
 
-import click
 import tomlkit
 from packaging.specifiers import SpecifierSet
 from packaging.utils import NormalizedName, canonicalize_name
-from packaging.version import InvalidVersion, Version
+from packaging.version import Version
 
 from . import constants
 from .commands import git, uv
@@ -136,39 +134,19 @@ def supported_python_versions(
 ) -> tuple[str, ...]:
     """Python versions (major.minor) the environment is resolved for.
 
-    Taken from the setting ``support_python_version`` (comma separated,
-    ``UVREV_SUPPORT_PYTHON_VERSION``) or, if not set,
-    from the Python versions installed for uv. Only versions matching
-    ``requires-python`` are used, as uv rejects environments that don't.
+    Taken from the setting ``python_versions_supported`` (by default the Python
+    versions installed for uv). Only versions matching ``requires-python`` are
+    used, as uv rejects environments that don't.
 
     Args:
-        project: Project to run uv in.
+        project: Project with the settings.
         requires_python: ``requires-python`` of the project.
 
     Returns:
         Sorted versions.
     """
-    if configured := project.settings.support_python_version:
-        try:
-            versions = {Version(v) for v in configured.split(",") if v.strip()}
-        except InvalidVersion as e:
-            raise click.ClickException(
-                "Invalid Python version in the setting support_python_version "
-                f"({constants.SUPPORT_PYTHON_VERSION_ENV}={configured!r}): {e}"
-            ) from e
-    else:
-        output = uv(
-            "python",
-            "list",
-            "--only-installed",
-            "--output-format",
-            "json",
-            project=project,
-            capture_output=True,
-        )
-        installed = (Version(entry["version"]) for entry in json.loads(output))
-        versions = {Version(f"{v.major}.{v.minor}") for v in installed}
     spec = SpecifierSet(requires_python)
+    versions = {Version(v) for v in project.settings.python_versions_supported}
     return tuple(str(v) for v in sorted(versions) if v in spec)
 
 

@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from collections.abc import Callable, Mapping
@@ -616,12 +617,20 @@ def verify_cmd(project: UVRevProject, fix: bool) -> None:
 @cli.command()
 def settings() -> None:
     """Show the settings and where they are loaded from"""
-    click.echo(f"# {uvrev_settings.default_config_file()}")
+    click.echo(f"# {uvrev_settings.config_file()} (and files in UVREV_SETTINGS)")
     click.echo("[uvrev]")
     for name, value in vars(get_settings(click.get_current_context())).items():
-        click.echo(
-            f"{name} = {str(value).lower() if isinstance(value, bool) else repr(value)}"
-        )
+        click.echo(f"{name} = {toml_value(value)}")
+
+
+def toml_value(value: object) -> str:
+    """
+    >>> toml_value(True), toml_value("a-w"), toml_value(("3.12", "3.14"))
+    ('true', '"a-w"', '["3.12", "3.14"]')
+    """
+    if isinstance(value, tuple):
+        value = list(value)
+    return json.dumps(value)
 
 
 @cli.group()

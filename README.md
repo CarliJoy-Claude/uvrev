@@ -124,7 +124,7 @@ To verify and fix the environment after every change, pass `--verify` to
 
 uvrev reads its settings from the `[uvrev]` table of a TOML file in the user config directory,
 e.g. `~/.config/uvrev/config.toml` on Linux (`uvrev settings` shows the exact location).
-`UVREV_CONFIG_FILE` replaces the location of this file.
+`UVREV_SETTINGS` can list additional settings files (separated by `:`).
 
 ```toml
 [uvrev]
@@ -138,16 +138,15 @@ protect_mode = "a-w"
 unprotect_mode = "u+w"
 # Compile bytecode on install, a protected .venv can not cache it later
 compile_bytecode = true
-# Python versions the environments are resolved for (comma separated, e.g. "3.12,3.14"),
-# if empty the installed Python versions are used (see Supported Environments)
-support_python_version = ""
+# Python versions (major.minor) the environments are resolved for,
+# by default the Python versions installed for uv (see Supported Environments)
+python_versions_supported = ["3.12", "3.14"]
 # Run `uvrev verify --fix` after every change of an environment
 verify_after_change = false
 ```
 
 Each setting can be overridden by an environment variable, e.g. `UVREV_PROTECT=false`
-or `UVREV_SUPPORT_PYTHON_VERSION=3.12,3.14`.
-`UVREV_SETTINGS` can list additional settings files.
+or `UVREV_PYTHON_VERSIONS_SUPPORTED=3.12:3.14` (`3.12,3.14` works as well).
 
 ---
 
@@ -291,8 +290,8 @@ environments = [
 ```
 
 - `sys_platform` and `platform_machine` are taken from the Python interpreter running uvrev.
-- The Python versions are taken from the setting `support_python_version` (comma separated, e.g. `3.12,3.14`,
-  environment variable `UVREV_SUPPORT_PYTHON_VERSION`, see [Settings](#settings)).
+- The Python versions are taken from the setting `python_versions_supported`
+  (environment variable `UVREV_PYTHON_VERSIONS_SUPPORTED`, see [Settings](#settings)).
   If it is not set, the Python versions installed for uv are used (`uv python list --only-installed`).
 - Only versions matching `requires-python` are used, as uv rejects the others.
   If no version is left, `tool.uv.environments` is removed.
@@ -302,7 +301,7 @@ The change is part of the new revision (`Environments` in the changelog, `enviro
 `sync` and `restore` don't change it, so a restored revision is resolved exactly as before.
 
 The pinned Python version must be one of the supported versions, otherwise uv fails.
-Install it (e.g. `uv python install 3.14`) or add it to the setting `support_python_version`.
+Install it (e.g. `uv python install 3.14`) or add it to the setting `python_versions_supported`.
 The lock file is only valid on the platform it was created on.
 
 ---

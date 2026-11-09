@@ -20,7 +20,7 @@ class ChmodNotFoundError(click.ClickException):
             "found. "
             "It is needed to change the permissions of the .venv. "
             "Install it, or disable the protection with 'protect = false' in the "
-            f"[uvrev] table of {uvrev_settings.default_config_file()} "
+            f"[uvrev] table of {uvrev_settings.config_file()} "
             "or the environment variable UVREV_PROTECT=false."
         )
 
