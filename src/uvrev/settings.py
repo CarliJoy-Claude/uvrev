@@ -16,7 +16,7 @@ class Settings:
     """Settings of uvrev
 
     >>> Settings()
-    Settings(protect=True, chmod_command='chmod', protect_mode='a-w', unprotect_mode='u+w', compile_bytecode=True, support_python_version='')
+    Settings(protect=True, chmod_command='chmod', protect_mode='a-w', unprotect_mode='u+w', compile_bytecode=True, support_python_version='', verify_after_change=False)
     """
 
     # Make the .venv read-only, so it can only be changed by uvrev
@@ -33,6 +33,8 @@ class Settings:
     # environments are resolved for (tool.uv.environments),
     # if empty the installed Python versions are used
     support_python_version: str = ""
+    # Run `uvrev verify --fix` after every change of an environment
+    verify_after_change: bool = False
 
 
 def default_config_file() -> Path:
