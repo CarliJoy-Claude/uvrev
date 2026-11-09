@@ -6,10 +6,11 @@ from typing import Any
 
 import click
 from platformdirs import user_data_path
+from typed_settings.exceptions import TsError
 
 from uvrev.exceptions import RevisionNotFoundError, ToolError
 
-from . import constants
+from . import constants, settings as uvrev_settings
 from .commands import uv
 from .operations import (
     PYTHON_MINOR_VERSION,
@@ -26,10 +27,16 @@ from .operations import (
     upgrade_packages,
     upgrade_python,
 )
+from .protection import (
+    protect as protect_venv,
+    unprotect as unprotect_venv,
+    writable_venv,
+)
 from .report import Option, Report, RevisionChange
+from .settings import Settings, load_settings
 from .terminal import fatal_error, success, warning
 from .tool import run_tool
-from .types import Revision, UVRevProject
+from .types import Revision, SubprocessFailure, UVRevProject
 
 
 def get_base_dir() -> Path:
@@ -59,11 +66,27 @@ def warn_if_incomplete(project: UVRevProject) -> None:
         )
 
 
+def get_settings(ctx: click.Context | None) -> Settings:
+    """Settings loaded by the cli group, or loaded now if there is no context"""
+    settings = ctx.find_object(Settings) if ctx else None
+    return settings or settings_or_exit()
+
+
+def settings_or_exit() -> Settings:
+    """Load the settings, exit with a readable message if they are invalid"""
+    try:
+        return load_settings()
+    except TsError as e:
+        details = "".join(f"\n  {sub}" for sub in getattr(e, "exceptions", ()))
+        fatal_error(f"Invalid settings: {e}{details}")
+
+
 def env_option_callback(
-    _ctx: click.Context | None, _param: click.Parameter | None, value: str | None
+    ctx: click.Context | None, _param: click.Parameter | None, value: str | None
 ) -> UVRevProject:
+    settings = get_settings(ctx)
     if value is None and (venv := os.getenv("VIRTUAL_ENV")) and venv != sys.prefix:
-        proj = UVRevProject(Path(venv).parent)
+        proj = UVRevProject(Path(venv).parent, settings)
         if proj.exists():
             warn_if_incomplete(proj)
             return proj
@@ -72,7 +95,7 @@ def env_option_callback(
         )
 
     name = value or constants.DEFAULT_ENV
-    proj = UVRevProject(get_base_dir() / name)
+    proj = UVRevProject(get_base_dir() / name, settings)
 
     if not proj.exists():
         raise click.BadParameter(
@@ -143,12 +166,14 @@ def run_operation(
 
 @click.group()
 @click.version_option()
-def cli() -> None:
+@click.pass_context
+def cli(ctx: click.Context) -> None:
     """uvrev - UV package manager with conda-style revision tracking
 
     Manage UV projects with full revision history and easy rollback capabilities.
     Each package change is tracked in git with detailed changelogs.
     """
+    ctx.obj = settings_or_exit()
 
 
 @cli.group()
@@ -170,7 +195,10 @@ def env() -> None:
     help="Delete an existing folder of the environment first, "
     "if the environment was not created successfully",
 )
-def env_create(name: str | None, python: str | None, force: bool) -> None:
+@click.pass_context
+def env_create(
+    ctx: click.Context, name: str | None, python: str | None, force: bool
+) -> None:
     """Create a new UV project with revision tracking
 
     Running it again for an environment that was created successfully does
@@ -191,7 +219,7 @@ def env_create(name: str | None, python: str | None, force: bool) -> None:
         return
 
     try:
-        create_env(get_base_dir(), project_name, python, force)
+        create_env(get_base_dir(), project_name, python, force, get_settings(ctx))
         success(f"Project '{project_name}' created at {project.project_path}")
     except FileExistsError as e:
         fatal_error(str(e))
@@ -405,12 +433,54 @@ def path(project: UVRevProject) -> None:
 def run(project: UVRevProject, run_args: tuple[str, ...]) -> None:
     """Run commands in the project using uv run with locked dependencies
 
+    The venv is only synced (and therefore writable) before the command runs,
+    the command itself runs with the protected venv.
+
     Examples:
         uvrev run python script.py
         uvrev run pytest
         uvrev run -- myapp --help
     """
-    uv("run", "--locked", *run_args, project=project, keep_stdout=True)
+    try:
+        uv("sync", "--locked", "--check", project=project)
+    except SubprocessFailure:
+        with writable_venv(project):
+            uv("sync", "--locked", project=project)
+    uv("run", "--no-sync", *run_args, project=project, keep_stdout=True)
+
+
+@cli.command()
+@env_option
+def protect(project: UVRevProject) -> None:
+    """Make the venv read-only, so it can not be changed by accident"""
+    protect_venv(project)
+    success(f"Protected {project.venv_path}")
+    if not project.settings.protect:
+        warning(
+            "Protection is disabled, so uvrev does not make the venv writable "
+            "for changes. Run 'uvrev unprotect' before changing the environment."
+        )
+
+
+@cli.command()
+@env_option
+def unprotect(project: UVRevProject) -> None:
+    """Make the venv writable"""
+    unprotect_venv(project)
+    success(f"{project.venv_path} is writable")
+    if project.settings.protect:
+        warning("The next change of the environment protects it again.")
+
+
+@cli.command()
+def settings() -> None:
+    """Show the settings and where they are loaded from"""
+    click.echo(f"# {uvrev_settings.default_config_file()}")
+    click.echo("[uvrev]")
+    for name, value in vars(get_settings(click.get_current_context())).items():
+        click.echo(
+            f"{name} = {str(value).lower() if isinstance(value, bool) else repr(value)}"
+        )
 
 
 @cli.group()
@@ -461,7 +531,15 @@ def tool_run(
         uvrev tool run --from ./dist/mytool-1.2-py3-none-any.whl mytool
     """
     try:
-        exit_code = run_tool(command, args, from_spec, extras, python, refresh)
+        exit_code = run_tool(
+            command,
+            args,
+            from_spec,
+            extras,
+            python,
+            refresh,
+            get_settings(click.get_current_context()),
+        )
     except ToolError as e:
         fatal_error(str(e))
     sys.exit(exit_code)

@@ -29,6 +29,22 @@ def show_cwd_change(project_path: Path) -> None:
     show_cmd(("cd", str(project_path)))
 
 
+def run_cmd(*cmd: str, cwd: Path) -> None:
+    """
+    Execute a command in a directory, its stdout goes to stderr
+
+    Args:
+        *cmd: Command and its arguments
+        cwd: Directory to run command in
+    """
+    show_cwd_change(cwd)
+    show_cmd(cmd)
+    try:
+        subprocess.run(cmd, cwd=cwd, stdout=STDERR_FD, check=True)
+    except subprocess.CalledProcessError as e:
+        raise SubprocessFailure(e) from e
+
+
 @overload
 def git(
     *args: str,
@@ -106,6 +122,7 @@ def uv(
     # otherwise uv would recreate the environment with another interpreter
     for var in ("VIRTUAL_ENV", "UV_PYTHON"):
         env.pop(var, None)
+    env["UV_COMPILE_BYTECODE"] = str(project.settings.compile_bytecode).lower()
     stdout: int | None = STDERR_FD
     if capture_output:
         stdout = subprocess.PIPE

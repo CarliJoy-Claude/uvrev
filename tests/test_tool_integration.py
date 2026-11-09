@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 from click.testing import CliRunner, Result
+from conftest import writable_paths
 
 import uvrev.commands
 import uvrev.tool
@@ -392,6 +393,8 @@ def test_cache_and_refresh(
     assert syncs(uv_calls) == 1
     (directory,) = tool_dirs(tool_env, "uvrev-fx-app")
     created = json.loads((directory / RECEIPT_NAME).read_text())["created"]
+    # the venv of the tool is protected like the venvs of the environments
+    assert writable_paths(directory / ".venv") == ()
     marker = directory / ".venv" / "marker"
     marker.touch()
 
@@ -403,6 +406,7 @@ def test_cache_and_refresh(
     assert run("--refresh", "uvrev-fx-app==1.0").exit_code == 0
     assert syncs(uv_calls) == 2
     assert not marker.exists()
+    assert writable_paths(directory / ".venv") == ()
     assert tool_dirs(tool_env, "uvrev-fx-app") == (directory,)
     assert json.loads((directory / RECEIPT_NAME).read_text())["created"] >= created
 

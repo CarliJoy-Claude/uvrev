@@ -1,6 +1,5 @@
 import contextlib
 import json
-import os
 import platform
 import re
 import shutil
@@ -27,12 +26,18 @@ from .parser import (
     parse_uv_environments,
     parse_uv_lock_packages,
 )
+from .protection import unprotect, writable_venv
 from .report import RevisionChange
+from .settings import Settings
 from .types import Revision, SubprocessFailure, UVRevProject
 
 
 def create_env(
-    base_dir: Path, name: str, python: str | None = None, force: bool = False
+    base_dir: Path,
+    name: str,
+    python: str | None = None,
+    force: bool = False,
+    settings: Settings | None = None,
 ) -> UVRevProject:
     """Create a new UV project with revision tracking.
 
@@ -46,6 +51,7 @@ def create_env(
             uv pins the minor version in ``.python-version``.
         force: Delete the folder of the environment first, if it was not
             created successfully (no ``.uvrev_created_successfully``).
+        settings: Settings of uvrev (defaults if not given).
 
     Returns:
         Created UVRevProject instance.
@@ -55,7 +61,7 @@ def create_env(
             created successfully and ``force`` is not given.
     """
     target = base_dir.joinpath(name)
-    project = UVRevProject(target)
+    project = UVRevProject(target, settings or Settings())
     if project.created_successfully():
         return project
     if target.exists():
@@ -67,6 +73,8 @@ def create_env(
                 f"(e.g. created by an older uvrev) or 'uvrev env create --force {name}' "
                 "to delete and create it again."
             )
+        # a protected .venv can not be deleted
+        unprotect(project)
         shutil.rmtree(target)
     target.mkdir(parents=True)
     # Create project using uv
@@ -89,7 +97,8 @@ def create_env(
     data.setdefault("project", {})["version"] = "0"
     write_pyproject(project, data)
     update_environments(project)
-    uv("sync", project=project)
+    with writable_venv(project):
+        uv("sync", project=project)
     update_python_lock(project)
 
     # Create initial revision
@@ -127,7 +136,8 @@ def supported_python_versions(
 ) -> tuple[str, ...]:
     """Python versions (major.minor) the environment is resolved for.
 
-    Taken from ``UVREV_SUPPORT_PYTHON_VERSION`` (comma separated) or, if not set,
+    Taken from the setting ``support_python_version`` (comma separated,
+    ``UVREV_SUPPORT_PYTHON_VERSION``) or, if not set,
     from the Python versions installed for uv. Only versions matching
     ``requires-python`` are used, as uv rejects environments that don't.
 
@@ -138,13 +148,13 @@ def supported_python_versions(
     Returns:
         Sorted versions.
     """
-    if configured := os.getenv(constants.SUPPORT_PYTHON_VERSION_ENV):
+    if configured := project.settings.support_python_version:
         try:
             versions = {Version(v) for v in configured.split(",") if v.strip()}
         except InvalidVersion as e:
             raise click.ClickException(
-                f"Invalid Python version in {constants.SUPPORT_PYTHON_VERSION_ENV}"
-                f"={configured!r}: {e}"
+                "Invalid Python version in the setting support_python_version "
+                f"({constants.SUPPORT_PYTHON_VERSION_ENV}={configured!r}): {e}"
             ) from e
     else:
         output = uv(
@@ -461,7 +471,7 @@ def sync_or_reset(project: UVRevProject, *args: str) -> None:
         project: Project to sync.
         *args: Additional arguments for ``uv sync``.
     """
-    with reset_on_failure(project):
+    with reset_on_failure(project), writable_venv(project):
         uv("sync", *args, project=project)
 
 
@@ -506,7 +516,7 @@ def add_packages(
     Returns:
         Changes compared to the previous revision.
     """
-    with reset_on_failure(project):
+    with reset_on_failure(project), writable_venv(project):
         update_environments(project)
         uv(
             "add",
@@ -535,7 +545,7 @@ def remove_packages(project: UVRevProject, packages: tuple[str, ...]) -> Revisio
     Returns:
         Changes compared to the previous revision.
     """
-    with reset_on_failure(project):
+    with reset_on_failure(project), writable_venv(project):
         update_environments(project)
         uv("remove", *packages, project=project)
     return create_revision(project, f"Removed: {', '.join(packages)}")
@@ -575,7 +585,8 @@ def sync_packages(project: UVRevProject) -> RevisionChange:
     """
     installed_before = list_venv_packages(project)
     python_before = get_python_version(project)
-    uv("sync", "--frozen", project=project)
+    with writable_venv(project):
+        uv("sync", "--frozen", project=project)
     python_after = get_python_version(project)
     rev = get_last_revision_number(project)
     return RevisionChange(
@@ -621,7 +632,7 @@ def upgrade_packages(
     Returns:
         Changes compared to the previous revision.
     """
-    with reset_on_failure(project):
+    with reset_on_failure(project), writable_venv(project):
         update_environments(project)
         if packages:
             for pkg in packages:
@@ -665,7 +676,7 @@ def upgrade_python(project: UVRevProject, version: str) -> RevisionChange:
         else ""
     )
 
-    with reset_on_failure(project):
+    with reset_on_failure(project), writable_venv(project):
         update_environments(project)
         uv("python", "pin", version, project=project)
         uv("sync", project=project)

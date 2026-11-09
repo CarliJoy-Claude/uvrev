@@ -17,6 +17,7 @@ import uvrev.tool
 from uvrev.cli import cli
 from uvrev.commands import uv_tool
 from uvrev.exceptions import ToolError
+from uvrev.settings import Settings
 from uvrev.tool import (
     RECEIPT_NAME,
     EmbeddedProject,
@@ -476,7 +477,9 @@ class TestEnvironment:
         assert ensure_environment(REQUEST, refresh=False) == tool_directory(REQUEST)
 
     def test_failed_build_is_removed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def interrupted(directory: Path, request: ToolRequest) -> None:
+        def interrupted(
+            directory: Path, request: ToolRequest, settings: Settings
+        ) -> None:
             directory.mkdir(parents=True)
             raise KeyboardInterrupt
 

@@ -5,14 +5,14 @@ import sys
 from importlib.metadata import version
 from itertools import chain
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 import pytest
-from click.testing import CliRunner, Result
+from click.testing import Result
+from conftest import Invoker, writable_paths
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-import uvrev.cli
 from uvrev import constants, operations
 from uvrev.commands import git
 from uvrev.io import read_pyproject
@@ -26,10 +26,6 @@ def create_fake_env(path: Path) -> None:
     proj = UVRevProject(path)
     proj.lock_path.touch()
     proj.pyproject_path.write_text("[tool.uv]\npackage = false\n")
-
-
-class Invoker(Protocol):
-    def __call__(self, *args: str) -> Result: ...
 
 
 @pytest.fixture(scope="module")
@@ -67,17 +63,6 @@ def shared_project(shared_basedir: Path) -> UVRevProject:
     return UVRevProject(shared_basedir / constants.DEFAULT_ENV)
 
 
-@pytest.fixture
-def invoke() -> Invoker:
-    """Create a CLI test runner."""
-    runner = CliRunner()
-
-    def invoke(*args: str) -> Result:
-        return runner.invoke(uvrev.cli.cli, args=args)
-
-    return invoke
-
-
 @pytest.fixture(autouse=True)
 def tmp_basedir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
@@ -94,16 +79,6 @@ def upgradeable_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
     proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
     operations.create_env(fake_basedir, constants.DEFAULT_ENV)
     shutil.copytree(data_dir / "upgradeable", proj.project_path, dirs_exist_ok=True)
-    operations.create_revision(proj, "Add sampleproject")
-    return proj
-
-
-@pytest.fixture
-def sample_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
-    """Create a project with a lock file that is not yet installed"""
-    proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
-    operations.create_env(fake_basedir, constants.DEFAULT_ENV)
-    shutil.copytree(data_dir / "sample", proj.project_path, dirs_exist_ok=True)
     operations.create_revision(proj, "Add sampleproject")
     return proj
 
@@ -260,6 +235,9 @@ class TestEnvCreate:
         }
         created_files = {f.name for f in target.iterdir()}
         assert created_files == accepted_files
+
+        # the venv is protected
+        assert writable_paths(proj.venv_path) == ()
 
 
 class TestEnvCreateIdempotent:
@@ -819,7 +797,8 @@ class TestCliIntegration:
     def test_run(self, invoke: Invoker, shared_project: UVRevProject) -> None:
         result = invoke("run", "cowsay", "-t", "This is actually working")
         assert result.exit_code == 0
-        assert "uv run --locked cowsay" in result.output
+        assert "uv sync --locked --check" in result.output
+        assert "uv run --no-sync cowsay" in result.output
         assert "This is actually working" in result.output
 
     @pytest.mark.dependency(name="2-remove", depends=["1-add"])

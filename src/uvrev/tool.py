@@ -42,6 +42,8 @@ from platformdirs import user_cache_path
 
 from .commands import show_cmd, uv_tool
 from .exceptions import ToolError
+from .protection import writable
+from .settings import Settings
 from .terminal import warning
 from .types import SubprocessFailure
 
@@ -631,11 +633,19 @@ def sync_dependencies(
         raise
 
 
-def build_environment(directory: Path, request: ToolRequest) -> None:
+def build_environment(
+    directory: Path, request: ToolRequest, settings: Settings
+) -> None:
     """Build the environment in place (venvs are not relocatable)"""
     directory.mkdir(parents=True)
     venv = directory / ".venv"
-    env = uv_environment(venv)
+    env = MappingProxyType(
+        {
+            **uv_environment(venv),
+            # a protected venv can not cache bytecode later
+            "UV_COMPILE_BYTECODE": str(settings.compile_bytecode).lower(),
+        }
+    )
 
     with tempfile.TemporaryDirectory(prefix="uvrev-tool-") as target:
         uv_tool(
@@ -686,8 +696,14 @@ def build_environment(directory: Path, request: ToolRequest) -> None:
     ).write(directory)
 
 
-def ensure_environment(request: ToolRequest, refresh: bool) -> Path:
-    """Get the directory of a complete environment, build it if necessary"""
+def ensure_environment(
+    request: ToolRequest, refresh: bool, settings: Settings | None = None
+) -> Path:
+    """Get the directory of a complete environment, build it if necessary.
+
+    The venv of the tool is protected like the venvs of the environments.
+    """
+    settings = settings or Settings()
     directory = tool_directory(request)
     if not refresh and has_receipt(directory, request):
         return directory
@@ -698,12 +714,14 @@ def ensure_environment(request: ToolRequest, refresh: bool) -> Path:
         if not refresh and has_receipt(directory, request):
             # built by a parallel run while waiting for the lock
             return directory
-        shutil.rmtree(directory, ignore_errors=True)
-        try:
-            build_environment(directory, request)
-        except BaseException:
+        # a protected venv can only be deleted when it is writable
+        with writable(directory / ".venv", settings):
             shutil.rmtree(directory, ignore_errors=True)
-            raise
+            try:
+                build_environment(directory, request, settings)
+            except BaseException:
+                shutil.rmtree(directory, ignore_errors=True)
+                raise
     return directory
 
 
@@ -743,6 +761,7 @@ def run_tool(
     extras: Sequence[str],
     python: str | None,
     refresh: bool,
+    settings: Settings | None = None,
 ) -> int:
     """Install the tool with its locked dependencies and run it.
 
@@ -761,7 +780,7 @@ def run_tool(
 
     with tempfile.TemporaryDirectory(prefix="uvrev-wheel-") as directory:
         request = tool_request(spec, extras, python, Path(directory))
-        venv = ensure_environment(request, refresh) / ".venv"
+        venv = ensure_environment(request, refresh, settings) / ".venv"
     executable = script_path(venv, command)
     if not executable.is_file():
         scripts = console_scripts(venv, request.name)

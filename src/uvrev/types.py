@@ -1,7 +1,7 @@
 import shlex
 import subprocess
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NewType
 
@@ -10,6 +10,7 @@ from packaging.requirements import Requirement
 from packaging.utils import NormalizedName, canonicalize_name
 
 from . import constants
+from .settings import Settings
 
 Revision = NewType("Revision", int)
 
@@ -19,6 +20,7 @@ class UVRevProject:
     """Represents a UV project with revision tracking"""
 
     project_path: Path
+    settings: Settings = field(default_factory=Settings, compare=False)
 
     @property
     def pyproject_path(self) -> Path:
