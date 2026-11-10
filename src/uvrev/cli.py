@@ -4,7 +4,7 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn, Protocol
 
 import click
 from platformdirs import user_data_path
@@ -88,9 +88,18 @@ class Services:
 
 
 def get_services(ctx: click.Context | None) -> Services:
-    """Services of the cli call, or created now if there is no context"""
-    services = ctx.find_object(Services) if ctx else None
-    return services or Services(settings_or_exit())
+    """Services of the cli call.
+
+    Created when needed first (unless given as ``obj``), so a command that
+    fails to load the settings can report it like any other failure.
+    """
+    root = ctx.find_root() if ctx else None
+    if root is not None and isinstance(root.obj, Services):
+        return root.obj
+    services = Services(load_valid_settings())
+    if root is not None:
+        root.obj = services
+    return services
 
 
 def get_settings(ctx: click.Context | None) -> Settings:
@@ -98,18 +107,148 @@ def get_settings(ctx: click.Context | None) -> Settings:
     return get_services(ctx).settings
 
 
-def settings_or_exit() -> Settings:
-    """Load the settings, exit with a readable message if they are invalid"""
+def load_valid_settings() -> Settings:
+    """Load the settings.
+
+    Raises:
+        click.ClickException: With a readable message, if they are invalid.
+    """
     try:
         return load_settings()
     except TsError as e:
         details = "".join(f"\n  {sub}" for sub in getattr(e, "exceptions", ()))
-        fatal_error(f"Invalid settings: {e}{details}")
+        raise click.ClickException(f"Invalid settings: {e}{details}") from None
 
 
-def env_option_callback(
-    ctx: click.Context | None, _param: click.Parameter | None, value: str | None
+class JsonReport(Protocol):
+    """A report printed with --json"""
+
+    def to_json(self) -> str: ...
+
+
+# builds the report of a failed command from its context and the error message
+type ErrorReporter = Callable[[click.Context, str], JsonReport]
+
+# key in click.Context.meta: error found while parsing the options, raised when
+# the command is invoked, so it is reported like the failures of the command
+DEFERRED_ERROR = "uvrev.deferred_error"
+
+# failures with a message for the user, everything else is a bug
+KNOWN_ERRORS = (click.ClickException, RevisionNotFoundError, FileExistsError)
+
+
+class ReportingCommand(click.Command):
+    """Command that reports every failure.
+
+    With --json a report with status "error" is printed to stdout for every
+    failure after the arguments were parsed and the exit code is 1.
+    Wrong usage of the command line (exit code 2) prints no report.
+
+    Args:
+        error_report: Builds the report of a failure, for commands with --json.
+        report_options: Names of the parameters shown as ``options`` in the report.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        error_report: ErrorReporter | None = None,
+        report_options: tuple[str, ...] = (),
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.error_report = error_report
+        self.report_options = report_options
+
+    def invoke(self, ctx: click.Context) -> Any:
+        try:
+            return self.invoke_command(ctx)
+        except KNOWN_ERRORS as e:
+            self.fail(ctx, e)
+        except Exception as e:
+            # a bug: still report it, the traceback is shown as usual
+            self.echo_error_report(ctx, f"{type(e).__name__}: {e}")
+            raise
+
+    def invoke_command(self, ctx: click.Context) -> Any:
+        """Run the command, unless parsing its options found an error"""
+        if deferred := ctx.meta.pop(DEFERRED_ERROR, None):
+            raise deferred
+        # invalid settings stop every command, also those not using them
+        get_services(ctx)
+        return super().invoke(ctx)
+
+    def echo_error_report(self, ctx: click.Context, message: str) -> bool:
+        """Print the report of a failure, if --json was given.
+
+        Returns:
+            True if the report was printed.
+        """
+        if not ctx.params.get("as_json") or self.error_report is None:
+            return False
+        click.echo(self.error_report(ctx, message).to_json())
+        return True
+
+    def fail(self, ctx: click.Context, e: Exception) -> NoReturn:
+        if isinstance(e, click.ClickException):
+            message = e.format_message()
+            if not self.echo_error_report(ctx, message):
+                # shown by click, with the exit code of the exception
+                raise e
+        else:
+            message = str(e)
+            self.echo_error_report(ctx, message)
+        fatal_error(message)
+
+
+class UvrevGroup(click.Group):
+    """Group whose commands and subgroups report every failure"""
+
+    command_class = ReportingCommand
+    group_class = type
+
+
+def report_arguments(ctx: click.Context) -> tuple[str, ...]:
+    """The arguments (not options) given to the command, for the report"""
+    values: list[str] = []
+    for param in ctx.command.params:
+        if not isinstance(param, click.Argument) or param.name is None:
+            continue
+        value = ctx.params.get(param.name)
+        if isinstance(value, tuple):
+            values.extend(str(item) for item in value)
+        elif value is not None:
+            values.append(str(value))
+    return tuple(values)
+
+
+def report_options(ctx: click.Context) -> Mapping[str, Option]:
+    """The options of the command shown in the report"""
+    names = getattr(ctx.command, "report_options", ())
+    return {name: ctx.params.get(name) for name in names}
+
+
+def change_error_report(ctx: click.Context, message: str) -> Report:
+    """Report of a failed command that changes an environment"""
+    project: UVRevProject = ctx.params["project"]
+    try:
+        revision: Revision | None = get_last_revision_number(project)
+    except (click.ClickException, OSError):
+        # broken or missing environment
+        revision = None
+    return Report.from_error(
+        ctx.info_name or "",
+        report_arguments(ctx),
+        revision,
+        message,
+        report_options(ctx),
+    )
+
+
+def find_project(
+    ctx: click.Context | None, param: click.Parameter | None, value: str | None
 ) -> UVRevProject:
+    """Find the environment for --env (see README, Environment Selection)"""
     settings = get_settings(ctx)
     if value is None and (venv := os.getenv("VIRTUAL_ENV")) and venv != sys.prefix:
         proj = UVRevProject(Path(venv).parent, settings)
@@ -125,11 +264,26 @@ def env_option_callback(
 
     if not proj.exists():
         raise click.BadParameter(
-            f"❌ Project '{name}' does not exist. Create it with 'uvrev env create'",
+            f"Project '{name}' does not exist. Create it with 'uvrev env create'",
+            ctx=ctx,
+            param=param,
         )
 
     warn_if_incomplete(proj)
     return proj
+
+
+def env_option_callback(
+    ctx: click.Context | None, param: click.Parameter | None, value: str | None
+) -> UVRevProject:
+    try:
+        return find_project(ctx, param, value)
+    except click.ClickException as e:
+        if ctx is None:
+            raise
+        # raised by ReportingCommand.invoke, the command is not executed
+        ctx.meta[DEFERRED_ERROR] = e
+        return UVRevProject(Path(value or constants.DEFAULT_ENV))
 
 
 def env_option[F: Callable[..., Any]](f: F) -> F:
@@ -213,48 +367,30 @@ def verified(
 
 
 def run_operation(
-    project: UVRevProject,
-    arguments: tuple[str, ...],
-    as_json: bool,
-    operation: Callable[[], RevisionChange],
-    options: Mapping[str, Option] | None = None,
+    as_json: bool, operation: Callable[[], RevisionChange]
 ) -> RevisionChange:
     """Run an operation and print its JSON report if requested.
 
-    On failure the JSON report is still printed (with status "error") and the
-    program exits with exit code 1.
+    Failures are reported by ReportingCommand.
     """
-    if not as_json:
-        return operation()
-
-    command = click.get_current_context().info_name or ""
-    try:
-        change = operation()
-    except (click.ClickException, RevisionNotFoundError) as e:
-        message = e.format_message() if isinstance(e, click.ClickException) else str(e)
-        try:
-            revision: Revision | None = get_last_revision_number(project)
-        except click.ClickException:
-            revision = None
-        click.echo(
-            Report.from_error(command, arguments, revision, message, options).to_json()
+    change = operation()
+    if as_json:
+        ctx = click.get_current_context()
+        report = Report.from_change(
+            ctx.info_name or "", report_arguments(ctx), change, report_options(ctx)
         )
-        fatal_error(message)
-    click.echo(Report.from_change(command, arguments, change, options).to_json())
+        click.echo(report.to_json())
     return change
 
 
-@click.group()
+@click.group(cls=UvrevGroup)
 @click.version_option()
-@click.pass_context
-def cli(ctx: click.Context) -> None:
+def cli() -> None:
     """uvrev - UV package manager with conda-style revision tracking
 
     Manage UV projects with full revision history and easy rollback capabilities.
     Each package change is tracked in git with detailed changelogs.
     """
-    if not isinstance(ctx.obj, Services):
-        ctx.obj = Services(settings_or_exit())
 
 
 @cli.group()
@@ -299,11 +435,8 @@ def env_create(
         success(f"Project '{project_name}' already exists at {project.project_path}")
         return
 
-    try:
-        create_env(get_base_dir(), project_name, python, force, get_settings(ctx))
-        success(f"Project '{project_name}' created at {project.project_path}")
-    except FileExistsError as e:
-        fatal_error(str(e))
+    create_env(get_base_dir(), project_name, python, force, get_settings(ctx))
+    success(f"Project '{project_name}' created at {project.project_path}")
 
 
 @env.command("fix")
@@ -349,7 +482,7 @@ def env_list() -> None:
         )
 
 
-@cli.command()
+@cli.command(error_report=change_error_report, report_options=("upgrade_all", "python"))
 @click.argument("packages", nargs=-1, required=True)
 @click.option(
     "--upgrade-all",
@@ -382,21 +515,18 @@ def add(
         uvrev add --python 3.14 pandas    # Add pandas and switch to Python 3.14
     """
     change = run_operation(
-        project,
-        packages,
         as_json,
         verified(
             project,
             verify_after,
             lambda: add_packages(project, packages, upgrade_all, python),
         ),
-        {"upgrade_all": upgrade_all, "python": python},
     )
     if change.created:
         success(f"Created revision {change.revision}")
 
 
-@cli.command()
+@cli.command(error_report=change_error_report, report_options=("ignore_missing",))
 @click.argument("packages", nargs=-1, required=True)
 @click.option(
     "--ignore-missing",
@@ -422,15 +552,12 @@ def remove(
         uvrev remove --ignore-missing pandas numpy   # fine if they are not installed
     """
     change = run_operation(
-        project,
-        packages,
         as_json,
         verified(
             project,
             verify_after,
             lambda: remove_packages(project, packages, ignore_missing),
         ),
-        {"ignore_missing": ignore_missing},
     )
     if change.created:
         success(f"Removed {' '.join(packages)}.  Created revision {change.revision}.")
@@ -438,7 +565,7 @@ def remove(
         success("Nothing to remove.")
 
 
-@cli.command()
+@cli.command(error_report=change_error_report)
 @env_option
 @json_option
 @verify_option
@@ -448,15 +575,12 @@ def sync(project: UVRevProject, as_json: bool, verify_after: bool | None) -> Non
     With --json the changes of the installed packages are reported.
     """
     run_operation(
-        project,
-        (),
-        as_json,
-        verified(project, verify_after, lambda: sync_packages(project)),
+        as_json, verified(project, verify_after, lambda: sync_packages(project))
     )
     success("Sync complete.")
 
 
-@cli.command()
+@cli.command(error_report=change_error_report)
 @click.argument("packages", nargs=-1)
 @env_option
 @json_option
@@ -474,8 +598,6 @@ def upgrade(
         uvrev upgrade pandas    # Upgrade only pandas
     """
     change = run_operation(
-        project,
-        packages,
         as_json,
         verified(project, verify_after, lambda: upgrade_packages(project, packages)),
     )
@@ -499,7 +621,7 @@ def python_version_callback(
     return value
 
 
-@cli.command("upgrade-python")
+@cli.command("upgrade-python", error_report=change_error_report)
 @click.argument("version", callback=python_version_callback)
 @env_option
 @json_option
@@ -517,8 +639,6 @@ def upgrade_python_cmd(
         uvrev upgrade-python 3.14
     """
     change = run_operation(
-        project,
-        (version,),
         as_json,
         verified(project, verify_after, lambda: upgrade_python(project, version)),
     )
@@ -550,7 +670,7 @@ def history(project: UVRevProject) -> None:
     click.echo(output)
 
 
-@cli.command()
+@cli.command(error_report=change_error_report)
 @click.argument("revision", type=int)
 @env_option
 @json_option
@@ -559,18 +679,11 @@ def restore(
     project: UVRevProject, revision: Revision, as_json: bool, verify_after: bool | None
 ) -> None:
     """Restore project to a specific revision"""
-    try:
-        run_operation(
-            project,
-            (str(revision),),
-            as_json,
-            verified(
-                project, verify_after, lambda: restore_revision(project, revision)
-            ),
-        )
-        success(f"Restored to revision {revision}")
-    except RevisionNotFoundError as e:
-        fatal_error(str(e))
+    run_operation(
+        as_json,
+        verified(project, verify_after, lambda: restore_revision(project, revision)),
+    )
+    success(f"Restored to revision {revision}")
 
 
 @cli.command()

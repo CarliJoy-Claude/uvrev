@@ -20,6 +20,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- With `--json`, some failures printed no report: an unknown environment (`--env`), invalid settings and a missing
+  `uv` command. Now every failure after parsing the command line prints a report with `"status": "error"`
+  and exits with `1`. See the [README](README.md#failures).
+- A missing `uv` or `git` command gives a clear message naming the command, instead of
+  `Could not convert loaded settings: FileNotFoundError`.
 - The environment variable `UVREV_ENV` was documented in the help of `--env`, but not used.
   The environment is now taken from `--env`, then `UVREV_ENV`, then the activated uvrev environment, then `base`.
   See the [README](README.md#environment-selection).

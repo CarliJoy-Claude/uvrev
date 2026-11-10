@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterator, Mapping
 from importlib.metadata import distributions, version as package_version
 from pathlib import Path
 
+import click
 import tomlkit
 from packaging.specifiers import SpecifierSet
 from packaging.utils import NormalizedName, canonicalize_name
@@ -483,7 +484,8 @@ def reset_on_failure(project: UVRevProject) -> Iterator[None]:
     """
     try:
         yield
-    except SubprocessFailure:
+    except click.ClickException:
+        # a failed command, or a missing one (uv, chmod)
         changed = (
             project.pyproject_path,
             project.python_version_path,

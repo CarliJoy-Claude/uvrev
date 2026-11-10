@@ -216,7 +216,14 @@ uvrev add pandas numpy --json
 | `error_message` | `string \| null` | The error, if `status` is `"error"`. |
 
 All package names are [normalized](https://packaging.python.org/en/latest/specifications/name-normalization/) and sorted.
-On failure, the report is still written (without changes) and the exit code is `1`.
+### Failures
+
+With `--json`, **every** failure after the command line was parsed writes a report with `"status": "error"`
+and a readable `error_message`, and the exit code is `1`. This includes an unknown environment,
+invalid settings, a missing `uv` or `git` command and unexpected errors.
+The report has the fields of the command, without changes.
+
+Only wrong usage of the command line (e.g. an unknown option) exits with `2` and writes no report.
 
 Example usage in Ansible:
 
