@@ -4,6 +4,50 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `--json` for more commands, so a caller can tell whether anything changed.
+  See the [README](README.md#reports-of-other-commands).
+  - `env create`: reports `created`, `path` and `python` (the pinned version).
+  - `protect` / `unprotect`: report `changed`, `protected` and `path`.
+  - `verify`: reports `problems`, `remaining_problems` and `fixed`.
+- `--dry-run` for `add`, `remove`, `upgrade` and `upgrade-python`: reports what would change
+  without touching the environment, its files or its revisions. See the [README](README.md#dry-run).
+- `uvrev remove --ignore-missing`: packages that are no dependencies are skipped instead of failing.
+  If none is left, the command succeeds without a new revision.
+- JSON report of `add`, `remove`, `sync`, `upgrade`, `upgrade-python` and `restore`:
+  - `verify`: the result of `--verify` (`problems`, `remaining_problems`, `fixed`), `null` if it did not run.
+    If the venv can not be fixed, the report still contains the change that was made.
+  - `options` contains `dry_run` (and `ignore_missing` for `remove`).
+  - `schema_version` stays 2: fields are only added. It only changes if existing fields change.
+- `uvrev env create --python` for an existing environment warns if the environment uses another Python version
+  (the option is still not applied).
+
+### Changed
+
+- `uvrev add NAME` (without version) means "any version" and replaces an existing constraint:
+  after `uvrev add 'six==1.15.0'`, `uvrev add six` drops the pin (it changed nothing before).
+  The requirement is passed to uv as `six>=0`, which uvrev treats and shows like no constraint.
+  The locked version is kept until an upgrade. See the [README](README.md#adding-packages-without-a-version).
+- The revisions are committed as `uvrev <user@hostname>` instead of the git identity of the user,
+  and never signed. See the [README](README.md#git-identity).
+- With `--json`, an unknown environment exits with `1` (and a report) instead of `2`.
+
+### Fixed
+
+- `uvrev env create` failed for users without a git identity (`user.name` / `user.email`), e.g. service users,
+  and left a half-created folder behind. `uvrev env fix` configures existing environments.
+- With `--json`, some failures printed no report: an unknown environment (`--env`), invalid settings and a
+  missing `uv` command. Now every failure after parsing the command line prints a report with
+  `"status": "error"` and exits with `1`. See the [README](README.md#failures).
+- A missing `uv` or `git` command gives a clear message naming the command, instead of
+  `Could not convert loaded settings: FileNotFoundError`.
+- The environment variable `UVREV_ENV` was documented in the help of `--env`, but not used.
+  The environment is taken from `--env`, then `UVREV_ENV`, then the activated uvrev environment, then `base`.
+  See the [README](README.md#environment-selection).
+
 ## [0.4] (2026-11-10)
 
 ### Added
@@ -138,6 +182,7 @@ First real release.
 - `uvrev history` shows the revisions and `uvrev restore` goes back to a previous one.
 - `uvrev path` shows the location of an environment.
 
+[Unreleased]: https://gitlab.com/Kound/uvrev/-/compare/0.4...main
 [0.4]: https://gitlab.com/Kound/uvrev/-/compare/0.3...0.4
 [0.3]: https://gitlab.com/Kound/uvrev/-/compare/0.2...0.3
 [0.2]: https://gitlab.com/Kound/uvrev/-/compare/0.1.4...0.2

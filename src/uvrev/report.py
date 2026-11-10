@@ -9,6 +9,7 @@ from packaging.version import Version
 
 from .differ import Changes, Diff, Names, VersionChange
 from .types import Revision
+from .verify import Problem, VerifyResult
 
 SCHEMA_VERSION: Final[int] = 2
 
@@ -63,6 +64,54 @@ class EnvironmentsChange:
 
 
 @dataclass(frozen=True)
+class ProblemEntry:
+    """A problem found by ``uvrev verify``"""
+
+    kind: str
+    path: str
+    package: str | None
+    is_warning: bool
+
+    @classmethod
+    def from_problem(cls, problem: Problem) -> Self:
+        return cls(
+            kind=problem.kind,
+            path=str(problem.path),
+            package=problem.package,
+            is_warning=problem.is_warning,
+        )
+
+
+@dataclass(frozen=True)
+class VerifySummary:
+    """Result of verifying a venv, as shown in the reports
+
+    >>> from pathlib import Path
+    >>> problem = Problem("modified", Path("a.py"), canonicalize_name("pkg"))
+    >>> summary = VerifySummary.from_result(VerifyResult((problem,), (), fixed=True))
+    >>> summary.problems
+    (ProblemEntry(kind='modified', path='a.py', package='pkg', is_warning=False),)
+    >>> summary.remaining_problems, summary.fixed
+    ((), True)
+    """
+
+    # found before fixing
+    problems: tuple[ProblemEntry, ...]
+    # left after fixing, the same as problems without --fix
+    remaining_problems: tuple[ProblemEntry, ...]
+    # True if at least one problem was repaired
+    fixed: bool
+
+    @classmethod
+    def from_result(cls, result: VerifyResult) -> Self:
+        return cls(
+            problems=tuple(map(ProblemEntry.from_problem, result.problems)),
+            remaining_problems=tuple(map(ProblemEntry.from_problem, result.remaining)),
+            fixed=result.fixed,
+        )
+
+
+@dataclass(frozen=True)
 class Report:
     """JSON report of a command, the field order is the order in the JSON"""
 
@@ -80,6 +129,8 @@ class Report:
     versions: Versions
     python: VersionChange | None
     environments: EnvironmentsChange | None
+    # result of verifying the venv after the change, None if it did not run
+    verify: VerifySummary | None
     error_message: str | None
 
     @classmethod
@@ -89,14 +140,19 @@ class Report:
         arguments: tuple[str, ...],
         change: RevisionChange,
         options: Mapping[str, Option] | None = None,
+        verify: VerifyResult | None = None,
+        error_message: str | None = None,
     ) -> Self:
-        """Build the report of a successful command.
+        """Build the report of a command that changed the environment.
 
         Args:
             command: Executed subcommand.
             arguments: Arguments given to the subcommand.
             change: Outcome of the command.
             options: Options given to the subcommand, e.g. ``{"upgrade_all": True}``.
+            verify: Result of verifying (and fixing) the venv afterwards.
+            error_message: Error that occurred after the change (e.g. the venv
+                could not be fixed), marks the report as failed.
 
         Examples:
             >>> change = RevisionChange(
@@ -118,10 +174,17 @@ class Report:
             {}
             >>> Report.from_change("add", ("numpy",), change, {"upgrade_all": True}).options
             {'upgrade_all': True}
+            >>> report.verify is None
+            True
+            >>> failed = Report.from_change(
+            ...     "add", ("numpy",), change, verify=VerifyResult(), error_message="boom"
+            ... )
+            >>> failed.status, failed.revision, failed.verify.fixed
+            ('error', 2, False)
         """
         return cls(
             schema_version=SCHEMA_VERSION,
-            status="success",
+            status="error" if error_message else "success",
             command=command,
             arguments=arguments,
             options=dict(options or {}),
@@ -137,7 +200,8 @@ class Report:
             ),
             python=change.python.versions().get(canonicalize_name("python")),
             environments=EnvironmentsChange.from_diff(change.environments),
-            error_message=None,
+            verify=VerifySummary.from_result(verify) if verify else None,
+            error_message=error_message,
         )
 
     @classmethod
@@ -183,6 +247,7 @@ class Report:
             versions=Versions(packages={}, dependencies={}),
             python=None,
             environments=None,
+            verify=None,
             error_message=error_message,
         )
 
@@ -218,7 +283,67 @@ class Report:
           },
           "python": null,
           "environments": null,
+          "verify": null,
           "error_message": "boom"
         }
         """
         return json.dumps(asdict(self), indent=2)
+
+
+@dataclass(frozen=True)
+class CommandReport:
+    """Common fields of the JSON reports that are no change reports.
+
+    The subclasses add the fields of their command, ``error_message`` is last.
+    """
+
+    schema_version: int
+    status: Literal["success", "error"]
+    command: str
+    arguments: tuple[str, ...]
+    options: Mapping[str, Option]
+
+    def to_json(self) -> str:
+        """Serialize the report, tuples become JSON arrays."""
+        return json.dumps(asdict(self), indent=2)
+
+
+@dataclass(frozen=True)
+class EnvCreateReport(CommandReport):
+    """Report of ``uvrev env create``
+
+    >>> report = EnvCreateReport(2, "success", "create", ("demo",), {}, True, "/envs/demo", "3.14", None)
+    >>> json.loads(report.to_json())["created"]
+    True
+    """
+
+    # False if the environment existed already
+    created: bool
+    # path of the project of the environment
+    path: str
+    # pinned Python version (major.minor), None if unknown
+    python: str | None
+    error_message: str | None
+
+
+@dataclass(frozen=True)
+class ProtectReport(CommandReport):
+    """Report of ``uvrev protect`` and ``uvrev unprotect``"""
+
+    # True if permissions were changed
+    changed: bool
+    # state afterwards, None if unknown (the command failed)
+    protected: bool | None
+    # path of the venv
+    path: str
+    error_message: str | None
+
+
+@dataclass(frozen=True)
+class VerifyReport(CommandReport):
+    """Report of ``uvrev verify``"""
+
+    problems: tuple[ProblemEntry, ...]
+    remaining_problems: tuple[ProblemEntry, ...]
+    fixed: bool
+    error_message: str | None

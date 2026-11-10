@@ -1,7 +1,9 @@
 import os
 import shlex
+import shutil
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
 from typing import Literal, Protocol, overload
@@ -23,6 +25,37 @@ def show_cmd(cmd: tuple[str, ...]) -> None:
     )
 
 
+class CommandNotFoundError(click.ClickException):
+    """A command uvrev needs (uv, git) is not installed"""
+
+    def __init__(self, command: str) -> None:
+        self.command = command
+        super().__init__(
+            f"The '{command}' command was not found. "
+            f"uvrev needs {command}, install it and make sure it is on the PATH."
+        )
+
+
+@contextmanager
+def needs_command(command: str, environ: Mapping[str, str]) -> Iterator[None]:
+    """Raise a clear error, if the command started within the block is missing.
+
+    Args:
+        command: Name of the command.
+        environ: Environment of the started process, its PATH is searched.
+
+    Raises:
+        CommandNotFoundError: If the command is not on the PATH.
+    """
+    try:
+        yield
+    except FileNotFoundError:
+        # also raised for a missing working directory
+        if shutil.which(command, path=environ.get("PATH")) is None:
+            raise CommandNotFoundError(command) from None
+        raise
+
+
 @cache
 def show_cwd_change(project_path: Path) -> None:
     """Show cd command once per project"""
@@ -40,7 +73,8 @@ def run_cmd(*cmd: str, cwd: Path) -> None:
     show_cwd_change(cwd)
     show_cmd(cmd)
     try:
-        subprocess.run(cmd, cwd=cwd, stdout=STDERR_FD, check=True)
+        with needs_command(cmd[0], os.environ):
+            subprocess.run(cmd, cwd=cwd, stdout=STDERR_FD, check=True)
     except subprocess.CalledProcessError as e:
         raise SubprocessFailure(e) from e
 
@@ -81,13 +115,14 @@ def git(
 
     stdout = subprocess.PIPE if capture_output else STDERR_FD
     try:
-        result = subprocess.run(
-            cmd,
-            cwd=project.project_path,
-            stdout=stdout,
-            text=True,
-            check=True,
-        )
+        with needs_command("git", os.environ):
+            result = subprocess.run(
+                cmd,
+                cwd=project.project_path,
+                stdout=stdout,
+                text=True,
+                check=True,
+            )
     except subprocess.CalledProcessError as e:
         raise SubprocessFailure(e) from e
     if capture_output:
@@ -141,14 +176,15 @@ def uv(
     elif keep_stdout:
         stdout = None
     try:
-        result = subprocess.run(
-            cmd,
-            cwd=project.project_path,
-            check=True,
-            env=env,
-            stdout=stdout,
-            text=True,
-        )
+        with needs_command("uv", env):
+            result = subprocess.run(
+                cmd,
+                cwd=project.project_path,
+                check=True,
+                env=env,
+                stdout=stdout,
+                text=True,
+            )
     except subprocess.CalledProcessError as e:
         raise SubprocessFailure(e) from e
     return result.stdout if capture_output else ""
@@ -199,15 +235,16 @@ def uv_tool(
     stderr: int | None = None
     if capture_stderr:
         stderr = subprocess.PIPE
-    result = subprocess.run(
-        cmd,
-        env=dict(env),
-        input=stdin,
-        stdout=stdout,
-        stderr=stderr,
-        text=True,
-        check=False,
-    )
+    with needs_command("uv", env):
+        result = subprocess.run(
+            cmd,
+            env=dict(env),
+            input=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+            check=False,
+        )
     if capture_stderr:
         click.echo(result.stderr, err=True, nl=False)
     if result.returncode != 0:

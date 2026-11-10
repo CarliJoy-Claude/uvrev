@@ -1,6 +1,5 @@
 import json
 import platform
-import shutil
 import sys
 from importlib.metadata import version
 from itertools import chain
@@ -72,16 +71,6 @@ def tmp_basedir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     base_dir = tmp_path / "tmp_basedir"
     monkeypatch.setenv("UVREV_BASE", str(base_dir))
     return base_dir
-
-
-@pytest.fixture
-def upgradeable_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
-    """Create a project with an uv.lock that can be updated"""
-    proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
-    operations.create_env(fake_basedir, constants.DEFAULT_ENV)
-    shutil.copytree(data_dir / "upgradeable", proj.project_path, dirs_exist_ok=True)
-    operations.create_revision(proj, "Add sampleproject")
-    return proj
 
 
 def parse_report(result: Result) -> dict[str, Any]:
@@ -297,7 +286,9 @@ class TestEnvCreateIdempotent:
         assert "uvrev env fix old" in invoke("env", "list").output
 
         # .git/info/exclude is created if needed
-        assert invoke("env", "fix", "old").exit_code == 0
+        result = invoke("env", "fix", "old")
+        assert result.exit_code == 0
+        assert "is not a git repository" in result.output
         assert UVRevProject(target).created_successfully()
         exclude = target / ".git" / "info" / "exclude"
         assert exclude.read_text() == f"{constants.CREATED_MARKER_FILE}\n"
@@ -709,12 +700,16 @@ class TestAddUpgradeAll:
         assert result.exit_code == 0
         assert "Created revision 2" in result.output
         # added with --upgrade, so locked versions don't block the new package
-        assert "uv add --raw --upgrade peppercorn" in result.output
+        assert "uv add --raw --upgrade 'peppercorn>=0'" in result.output
         assert "uv sync --upgrade" in result.output
         report = parse_report(result)
         assert report["command"] == "add"
         assert report["arguments"] == ["peppercorn"]
-        assert report["options"] == {"upgrade_all": True, "python": None}
+        assert report["options"] == {
+            "upgrade_all": True,
+            "python": None,
+            "dry_run": False,
+        }
         assert report["revision"] == 2
         assert report["changes"] == {
             "added": [],
@@ -740,7 +735,11 @@ class TestAddUpgradeAll:
 
         assert result.exit_code == 0
         report = parse_report(result)
-        assert report["options"] == {"upgrade_all": False, "python": None}
+        assert report["options"] == {
+            "upgrade_all": False,
+            "python": None,
+            "dry_run": False,
+        }
         assert report["changes"] == NO_CHANGES
         assert report["all_changed_dependencies"] == ["peppercorn"]
 
@@ -753,7 +752,11 @@ class TestAddUpgradeAll:
         assert result.exit_code == 1
         report = parse_report(result)
         assert report["status"] == "error"
-        assert report["options"] == {"upgrade_all": True, "python": None}
+        assert report["options"] == {
+            "upgrade_all": True,
+            "python": None,
+            "dry_run": False,
+        }
         assert report["revision"] == report["previous_revision"] == 1
 
 
@@ -893,6 +896,91 @@ class TestCliIntegration:
             "peppercorn": {"old": None, "new": ""}
         }
         assert report["all_changed_packages"] == []
+
+
+class TestRemoveIgnoreMissing:
+    def test_fails_without_option(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """Without --ignore-missing nothing is removed, if one package is missing"""
+        result = invoke("remove", "sampleproject", "not-installed")
+
+        assert result.exit_code == 1
+        deps = parse_uv_lock_packages(upgradeable_project.lock_path.read_text())
+        assert "sampleproject" in deps
+
+    def test_skips_missing(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        # the names are compared normalized
+        result = invoke(
+            "remove", "--ignore-missing", "SampleProject", "not-installed", "--json"
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Not a dependency, skipped: not-installed" in result.stderr
+        assert "uv remove SampleProject\n" in result.stderr
+        report = parse_report(result)
+        assert report["arguments"] == ["SampleProject", "not-installed"]
+        assert report["options"] == {"ignore_missing": True, "dry_run": False}
+        assert report["revision"] == 2
+        assert report["dependency_changes"]["removed"] == ["sampleproject"]
+
+    def test_nothing_left(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """If no package is a dependency, nothing happens and no revision is created"""
+        result = invoke("remove", "--ignore-missing", "not-installed", "--json")
+
+        assert result.exit_code == 0, result.output
+        assert "Nothing to remove" in result.stderr
+        assert "uv remove" not in result.stderr
+        report = parse_report(result)
+        assert report["status"] == "success"
+        assert report["revision"] == report["previous_revision"] == 1
+        assert report["all_changed_dependencies"] == []
+
+
+class TestEnvVariable:
+    """UVREV_ENV selects the environment, if --env is not given"""
+
+    @pytest.fixture
+    def envs(self, fake_basedir: Path) -> Path:
+        for name in ("base", "foo", "bar"):
+            create_fake_env(fake_basedir / name)
+        return fake_basedir
+
+    def test_default(self, invoke: Invoker, envs: Path) -> None:
+        assert invoke("path").stdout.strip() == str(envs / "base")
+
+    def test_variable(
+        self, invoke: Invoker, envs: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(constants.ENV_VARIABLE, "foo")
+
+        assert invoke("path").stdout.strip() == str(envs / "foo")
+        # the option wins
+        assert invoke("path", "-e", "bar").stdout.strip() == str(envs / "bar")
+
+    def test_wins_over_activated(
+        self, invoke: Invoker, envs: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VIRTUAL_ENV", str(envs / "bar" / ".venv"))
+        assert invoke("path").stdout.strip() == str(envs / "bar")
+
+        monkeypatch.setenv(constants.ENV_VARIABLE, "foo")
+
+        assert invoke("path").stdout.strip() == str(envs / "foo")
+
+    def test_missing(
+        self, invoke: Invoker, envs: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(constants.ENV_VARIABLE, "nope")
+
+        result = invoke("path")
+
+        assert result.exit_code == 2
+        assert "Project 'nope' does not exist" in result.output
 
 
 class TestCommon:

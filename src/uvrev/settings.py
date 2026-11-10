@@ -17,19 +17,26 @@ PYTHON_MINOR_VERSION: Final[re.Pattern[str]] = re.compile(r"\d+\.\d+")
 
 
 @cache
-def installed_python_versions() -> tuple[str, ...]:
+def installed_python_versions(uv: str = "uv") -> tuple[str, ...]:
     """The Python versions (major.minor) installed for uv, sorted
 
     Cached, as the settings are created often and uv is asked only once.
+    Empty if uv is not installed: the settings are also needed by commands
+    that work without uv, and the others report the missing uv themselves.
+
+    Args:
+        uv: Name of the uv command, started from PATH like everywhere in uvrev
+            (commands.py can not be used here, it imports the settings itself).
     """
-    # uv is started from PATH like everywhere in uvrev (commands.py can not be
-    # used here, it imports the settings itself)
-    output = subprocess.run(
-        ("uv", "python", "list", "--only-installed", "--output-format", "json"),  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
+    try:
+        output = subprocess.run(
+            (uv, "python", "list", "--only-installed", "--output-format", "json"),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except FileNotFoundError:
+        return ()
     versions = {
         tuple(int(part) for part in entry["version"].split(".")[:2])
         for entry in json.loads(output)

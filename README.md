@@ -66,7 +66,7 @@ uvrev --help
 | `uvrev env list`   | List all UV projects |
 | `uvrev env fix`    | Mark an environment as created successfully (see [Creating Environments](#creating-environments)) |
 | `uvrev add`        | Add packages to the current project (`--upgrade-all` also upgrades all others, `--python` changes the Python version) |
-| `uvrev remove`     | Remove packages from the current project |
+| `uvrev remove`     | Remove packages from the current project (`--ignore-missing` skips packages that are no dependencies) |
 | `uvrev sync`       | Sync project dependencies |
 | `uvrev upgrade`    | Upgrade all or the given packages |
 | `uvrev upgrade-python` | Change the Python minor version (e.g. `3.12` to `3.14`) |
@@ -158,8 +158,15 @@ or `UVREV_PYTHON_VERSIONS_SUPPORTED=3.12:3.14` (`3.12,3.14` works as well).
 
 ## JSON Output
 
-The commands that change an environment (`add`, `remove`, `sync`, `upgrade`, `upgrade-python`, `restore`) accept `--json`.
-Then only a JSON report is written to **stdout**; all logs and the output of `uv` and `git` go to **stderr**.
+With `--json` only a JSON report is written to **stdout**; all logs and the output of `uv` and `git` go to **stderr**.
+It is accepted by
+
+- the commands that change the packages of an environment (`add`, `remove`, `sync`, `upgrade`, `upgrade-python`,
+  `restore`), which write the *change report* described here,
+- `env create`, `protect`, `unprotect` and `verify`, see [Reports of other commands](#reports-of-other-commands).
+
+All reports start with the fields `schema_version`, `status`, `command`, `arguments` and `options`
+and end with `error_message`.
 
 ```bash
 uvrev add pandas numpy --json
@@ -171,7 +178,7 @@ uvrev add pandas numpy --json
   "status": "success",
   "command": "add",
   "arguments": ["pandas", "numpy"],
-  "options": {"upgrade_all": false, "python": null},
+  "options": {"upgrade_all": false, "python": null, "dry_run": false},
   "revision": 42,
   "previous_revision": 41,
   "changes": {"added": ["numpy", "pandas", "pytz"], "updated": ["python-dateutil"], "downgraded": [], "removed": []},
@@ -192,17 +199,18 @@ uvrev add pandas numpy --json
   },
   "python": null,
   "environments": null,
+  "verify": null,
   "error_message": null
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_version` | `integer` | Version of this format, currently `2`. |
+| `schema_version` | `integer` | Version of this format, currently `2`. It only changes if existing fields change or are removed: new fields and new keys in `options` are added without a new version, so ignore fields you don't know. |
 | `status` | `string` | `"success"` or `"error"`. |
 | `command` | `string` | The executed subcommand. |
 | `arguments` | `array[string]` | The arguments given to the subcommand. |
-| `options` | `object` | The options given to the subcommand, e.g. `{"upgrade_all": true, "python": null}` for `uvrev add --upgrade-all`. Empty for commands without options. |
+| `options` | `object` | The options given to the subcommand, e.g. `{"upgrade_all": true, "python": null, "dry_run": false}` for `uvrev add --upgrade-all`. Empty for commands without options. |
 | `revision` | `integer \| null` | Current revision after the command (unchanged if nothing changed). `null` only if it could not be determined. |
 | `previous_revision` | `integer \| null` | Revision before the command. A new revision was created if it differs from `revision`. |
 | `changes` | `object` | Changed packages (`added`, `updated`, `downgraded`, `removed`), including transitive ones. Taken from `uv.lock`, for `sync` from the installed packages. `updated` contains the upgrades, `downgraded` the packages whose version decreased. Every package is in one list only. |
@@ -213,10 +221,86 @@ uvrev add pandas numpy --json
 | `versions.dependencies` | `object` | For every changed dependency the `old` and `new` specifier. `""` means no version constraint, `null` means absent. |
 | `python` | `object \| null` | `old` and `new` exact version of the Python interpreter, if it changed. `null` if it did not change. |
 | `environments` | `object \| null` | `old` and `new` markers of `tool.uv.environments` (arrays of strings), if they changed. `null` if they did not change. See [Supported Environments](#supported-environments). |
+| `verify` | `object \| null` | The result of verifying the venv after the change (`--verify` or the setting `verify_after_change`): `problems`, `remaining_problems` and `fixed` like in the [report of `uvrev verify`](#reports-of-other-commands). `null` if it did not run. If problems remain, `status` is `"error"`, but the other fields still describe the change that was made. |
 | `error_message` | `string \| null` | The error, if `status` is `"error"`. |
 
 All package names are [normalized](https://packaging.python.org/en/latest/specifications/name-normalization/) and sorted.
-On failure, the report is still written (without changes) and the exit code is `1`.
+
+### Dry run
+
+`add`, `remove`, `upgrade` and `upgrade-python` accept `--dry-run` (e.g. for the check mode of Ansible).
+It reports what the command would change, without touching the environment, its files or its revisions:
+
+```bash
+uvrev upgrade --dry-run          # shows the changelog the upgrade would have
+uvrev add --dry-run --json six   # the same report as without --dry-run
+```
+
+The report is the one of the real command, with these differences:
+
+- `options` contains `"dry_run": true`.
+- `revision` equals `previous_revision`, as no revision is created.
+- `python` (the exact interpreter version) is only predicted if the pinned Python version would change
+  and uv finds an interpreter for the new version. A newer patch version of the current Python,
+  or an interpreter uv would have to download, is only reported by the real command.
+- `verify` is always `null`: nothing is installed, so `--verify` is ignored.
+
+uvrev copies `pyproject.toml`, `uv.lock` and `.python-version` to a temporary folder and lets uv resolve
+the change there without installing anything (`uv add --no-sync`, `uv remove --no-sync`, `uv lock`).
+So a dry run needs the package index like the real command, but no disk space for packages.
+
+### Reports of other commands
+
+`uvrev env create [name] --json` (command `env create`, options `python` and `force`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `created` | `boolean` | `false` if the environment existed already (nothing was done). |
+| `path` | `string` | Path of the project of the environment. |
+| `python` | `string \| null` | The pinned Python version (`major.minor`) of the environment, also if it existed already. `null` if unknown. |
+
+`uvrev protect --json` and `uvrev unprotect --json`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `changed` | `boolean` | `true` if permissions were changed (compared before and after `chmod`). |
+| `protected` | `boolean \| null` | The state afterwards, `null` if the command failed. |
+| `path` | `string` | Path of the `.venv`. |
+
+`uvrev verify [--fix] --json` (option `fix`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `problems` | `array[object]` | The problems found (before fixing). Each has `kind` (`missing`, `modified`, `not_synced` or `untracked`), `path`, `package` (`string \| null`) and `is_warning`. |
+| `remaining_problems` | `array[object]` | The problems left after `--fix`, the same as `problems` without `--fix`. |
+| `fixed` | `boolean` | `true` if `--fix` repaired at least one problem. |
+
+If problems that are no warnings remain, `status` is `"error"`, `error_message` says how many, and the exit code is `1`.
+
+```json
+{
+  "schema_version": 2,
+  "status": "success",
+  "command": "verify",
+  "arguments": [],
+  "options": {"fix": true},
+  "problems": [
+    {"kind": "modified", "path": "/envs/base/.venv/lib/python3.14/site-packages/six.py", "package": "six", "is_warning": false}
+  ],
+  "remaining_problems": [],
+  "fixed": true,
+  "error_message": null
+}
+```
+
+### Failures
+
+With `--json`, **every** failure after the command line was parsed writes a report with `"status": "error"`
+and a readable `error_message`, and the exit code is `1`. This includes an unknown environment,
+invalid settings, a missing `uv` or `git` command and unexpected errors.
+The report has the fields of the command, without changes.
+
+Only wrong usage of the command line (e.g. an unknown option) exits with `2` and writes no report.
 
 Example usage in Ansible:
 
@@ -318,7 +402,9 @@ The lock file is only valid on the platform it was created on.
 The file is ignored by git (`.git/info/exclude`).
 
 - If the environment was created successfully before, `uvrev env create` does nothing.
-  The `--python` version is **not** checked against the existing environment.
+  `--python` is **not** applied to the existing environment: uvrev warns if the environment uses another
+  version, and `--json` reports the pinned version as `python` (and `"created": false`).
+  Change the version with `uvrev upgrade-python`.
 - If the folder exists without the file (e.g. an aborted `uvrev env create`), it fails.
   `uvrev env create --force` deletes the folder and creates the environment again.
 - Commands using an environment without the file warn about it.
@@ -329,19 +415,33 @@ Mark them with `uvrev env fix <name>` first.
 
 ---
 
+## Git Identity
+
+Each environment is a git repository, and uvrev commits the revisions itself.
+`uvrev env create` configures the repository with its own identity
+(`user.name = uvrev`, `user.email = <user>@<hostname>`) and disables signing of commits and tags.
+So it works for users without a git identity (e.g. service users), and never waits for a passphrase.
+`uvrev env fix` applies the same configuration to an existing environment.
+
+---
+
 ## Environment Selection
 
-`uvrev` determines the active environment based on the **currently activated virtual environment**.
+The commands working on an environment use the first of:
 
-Activate an environment as usual:
+1. the option `--env <name>` (`-e <name>`),
+2. the environment variable `UVREV_ENV=<name>`,
+3. the **currently activated virtual environment**, if it is a uvrev environment,
+4. the environment `base`.
+
+So after activating an environment as usual, all `uvrev` commands operate on it:
 
 ```bash
-source .venv/bin/activate
+source "$(uvrev path -e myproject)/.venv/bin/activate"
+uvrev add pandas   # added to myproject
 ```
 
-Once activated, all `uvrev` commands operate on that environment automatically. No additional flags or environment variables are required.
-
-This mirrors standard Python workflows and avoids implicit global state.
+`uvrev env create [name]` and `uvrev env fix [name]` take the name as argument and don't use `UVREV_ENV`.
 
 ---
 
@@ -388,6 +488,28 @@ To run a tool from its source tree with its locked dependencies, use `uv sync --
 
 uv's normal configuration is used (indexes, credentials), except `UV_FROZEN`, `UV_LOCKED`, `UV_NO_SYNC` and `UV_PROJECT_ENVIRONMENT`, which are ignored.
 The environments are cached in `tools/` of the uvrev cache directory (`platformdirs.user_cache_dir("uvrev")`, can be changed with `UVREV_CACHE`).
+
+---
+
+## Adding Packages without a Version
+
+A package given without a version means **any version**, like in conda:
+
+```bash
+uvrev add 'six==1.15.0'   # pin six
+uvrev add six             # drop the pin again
+```
+
+uv keeps an existing constraint when a bare name is added, so uvrev passes such a requirement
+as `six>=0` to uv (`uv add --raw 'six>=0'`), and `pyproject.toml` contains `six>=0`.
+
+- Extras and markers are kept: `httpie[socks]` becomes `httpie[socks]>=0`.
+- Requirements with a version, URLs, paths and VCS requirements are passed to uv unchanged.
+- `six` and `six>=0` are the same requirement for uvrev: the changelog and the JSON report show both
+  as no constraint (`""` in `versions.dependencies`), and an environment that still contains `six`
+  gets no new revision by `uvrev add six`.
+- Dropping a constraint does not change the installed version: uv keeps the locked version until
+  an upgrade (`uvrev upgrade six` or `uvrev add --upgrade-all six`).
 
 ---
 

@@ -1,5 +1,6 @@
+import os
 import shutil
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
@@ -39,6 +40,26 @@ def chmod(venv: Path, mode: str, command: str) -> None:
     if shutil.which(command) is None:
         raise ChmodNotFoundError(command)
     run_cmd(command, "-R", mode, venv.name, cwd=venv.parent)
+
+
+def permissions(venv: Path) -> Mapping[Path, int]:
+    """The permissions of all files and directories of a venv.
+
+    Used to tell whether chmod changed anything, as the modes are settings and
+    can not be interpreted. Symlinks are skipped like chmod -R does.
+
+    Returns:
+        Mode of each path, empty if the venv does not exist.
+    """
+    if not venv.is_dir():
+        return {}
+    modes = {venv: venv.lstat().st_mode}
+    for directory, dirnames, filenames in os.walk(venv):
+        for name in (*dirnames, *filenames):
+            path = Path(directory, name)
+            if not path.is_symlink():
+                modes[path] = path.lstat().st_mode
+    return modes
 
 
 def protect_venv(venv: Path, settings: Settings) -> None:

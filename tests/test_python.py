@@ -319,10 +319,14 @@ class TestAddPython:
         result = invoke("add", "--python", current, "peppercorn", "--json")
 
         assert result.exit_code == 0, result.output
-        assert f"uv add --raw --python {current} peppercorn" in result.stderr
+        assert f"uv add --raw --python {current} 'peppercorn>=0'" in result.stderr
         assert f"uv python pin {current}" in result.stderr
         report: dict[str, Any] = json.loads(result.stdout)
-        assert report["options"] == {"upgrade_all": False, "python": current}
+        assert report["options"] == {
+            "upgrade_all": False,
+            "python": current,
+            "dry_run": False,
+        }
         assert report["python"] is None
         assert pinned(project) == current
 
@@ -339,7 +343,11 @@ class TestAddPython:
         assert "uv add --raw --python" in result.stderr
         assert f"uv python pin {new}" in result.stderr
         report: dict[str, Any] = json.loads(result.stdout)
-        assert report["options"] == {"upgrade_all": False, "python": new}
+        assert report["options"] == {
+            "upgrade_all": False,
+            "python": new,
+            "dry_run": False,
+        }
         assert report["python"] == {"old": old_python, "new": python_version(project)}
         assert report["all_changed_dependencies"] == ["peppercorn"]
         assert pinned(project) == new
