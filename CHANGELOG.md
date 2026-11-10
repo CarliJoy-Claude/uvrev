@@ -17,6 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - JSON report of `add`, `remove`, `sync`, `upgrade`, `upgrade-python` and `restore`: new field `verify` with the
   result of `--verify` (`problems`, `remaining_problems`, `fixed`), `null` if it did not run.
   If the venv can not be fixed, the report still contains the change that was made (with `"status": "error"`).
+- `--dry-run` for `add`, `remove`, `upgrade` and `upgrade-python`: reports what would change (same report, with
+  `"dry_run": true` in `options`) without touching the environment, its files or its revisions.
+  See the [README](README.md#dry-run).
 - `uvrev env create --python` for an existing environment warns if the environment uses another Python version
   (the option is still not applied).
 - `uvrev remove --ignore-missing`: packages that are no dependencies are skipped instead of failing (names are

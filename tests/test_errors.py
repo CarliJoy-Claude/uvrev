@@ -44,7 +44,11 @@ class TestUnknownEnvironment:
         assert "Project 'nope' does not exist" in report["error_message"]
         assert report["command"] == "add"
         assert report["arguments"] == ["six"]
-        assert report["options"] == {"upgrade_all": True, "python": None}
+        assert report["options"] == {
+            "upgrade_all": True,
+            "python": None,
+            "dry_run": False,
+        }
         assert report["revision"] is None
 
     def test_without_json(self, invoke: Invoker, fake_basedir: Path) -> None:

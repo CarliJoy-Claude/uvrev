@@ -18,6 +18,7 @@ from .commands import uv
 from .operations import (
     PYTHON_MINOR_VERSION,
     add_packages,
+    changelog_of,
     configure_git,
     create_env,
     get_last_revision_number,
@@ -357,6 +358,18 @@ def verify_option[F: Callable[..., Any]](f: F) -> F:
     )(f)
 
 
+def dry_run_option[F: Callable[..., Any]](f: F) -> F:
+    """Reusable option decorator to only report what a command would change"""
+
+    return click.option(
+        "--dry-run",
+        is_flag=True,
+        default=False,
+        help="Only report what would change: the environment, its files and "
+        "its revisions are not touched",
+    )(f)
+
+
 def echo_problems(problems: tuple[Problem, ...], err: bool = False) -> None:
     for problem in problems:
         click.secho(
@@ -371,6 +384,7 @@ def run_operation(
     as_json: bool,
     verify_after: bool | None,
     operation: Callable[[], RevisionChange],
+    dry_run: bool = False,
 ) -> RevisionChange:
     """Run an operation that changes an environment.
 
@@ -380,10 +394,17 @@ def run_operation(
 
     If the venv can not be fixed, the report contains the change (which is
     done) with status "error" and the program exits with exit code 1.
+
+    In a dry run the operation only predicts the change: the venv is not
+    verified and the changelog of the change is shown instead.
     """
     change = operation()
     ctx = click.get_current_context()
-    if verify_after is None:
+    if dry_run:
+        verify_after = False
+        click.echo(changelog_of(change), err=True)
+        success("Dry run: nothing was changed.")
+    elif verify_after is None:
         verify_after = project.settings.verify_after_change
     result = get_services(ctx).verify(project, True) if verify_after else None
     message = None
@@ -557,7 +578,10 @@ def env_list() -> None:
         )
 
 
-@cli.command(error_report=change_error_report, report_options=("upgrade_all", "python"))
+@cli.command(
+    error_report=change_error_report,
+    report_options=("upgrade_all", "python", "dry_run"),
+)
 @click.argument("packages", nargs=-1, required=True)
 @click.option(
     "--upgrade-all",
@@ -570,6 +594,7 @@ def env_list() -> None:
     default=None,
     help="Python version for 'uv add --python', pinned with 'uv python pin'",
 )
+@dry_run_option
 @env_option
 @json_option
 @verify_option
@@ -578,6 +603,7 @@ def add(
     packages: tuple[str, ...],
     upgrade_all: bool,
     python: str | None,
+    dry_run: bool,
     as_json: bool,
     verify_after: bool | None,
 ) -> None:
@@ -588,18 +614,22 @@ def add(
         uvrev add pandas                  # Add pandas
         uvrev add --upgrade-all pandas    # Add pandas and upgrade everything
         uvrev add --python 3.14 pandas    # Add pandas and switch to Python 3.14
+        uvrev add --dry-run pandas        # Show what adding pandas would change
     """
     change = run_operation(
         project,
         as_json,
         verify_after,
-        lambda: add_packages(project, packages, upgrade_all, python),
+        lambda: add_packages(project, packages, upgrade_all, python, dry_run),
+        dry_run,
     )
     if change.created:
         success(f"Created revision {change.revision}")
 
 
-@cli.command(error_report=change_error_report, report_options=("ignore_missing",))
+@cli.command(
+    error_report=change_error_report, report_options=("ignore_missing", "dry_run")
+)
 @click.argument("packages", nargs=-1, required=True)
 @click.option(
     "--ignore-missing",
@@ -607,6 +637,7 @@ def add(
     default=False,
     help="Skip packages that are no dependencies instead of failing",
 )
+@dry_run_option
 @env_option
 @json_option
 @verify_option
@@ -614,6 +645,7 @@ def remove(
     project: UVRevProject,
     packages: tuple[str, ...],
     ignore_missing: bool,
+    dry_run: bool,
     as_json: bool,
     verify_after: bool | None,
 ) -> None:
@@ -628,8 +660,11 @@ def remove(
         project,
         as_json,
         verify_after,
-        lambda: remove_packages(project, packages, ignore_missing),
+        lambda: remove_packages(project, packages, ignore_missing, dry_run),
+        dry_run,
     )
+    if dry_run:
+        return
     if change.created:
         success(f"Removed {' '.join(packages)}.  Created revision {change.revision}.")
     else:
@@ -649,14 +684,16 @@ def sync(project: UVRevProject, as_json: bool, verify_after: bool | None) -> Non
     success("Sync complete.")
 
 
-@cli.command(error_report=change_error_report)
+@cli.command(error_report=change_error_report, report_options=("dry_run",))
 @click.argument("packages", nargs=-1)
+@dry_run_option
 @env_option
 @json_option
 @verify_option
 def upgrade(
     project: UVRevProject,
     packages: tuple[str, ...],
+    dry_run: bool,
     as_json: bool,
     verify_after: bool | None,
 ) -> None:
@@ -667,8 +704,14 @@ def upgrade(
         uvrev upgrade pandas    # Upgrade only pandas
     """
     change = run_operation(
-        project, as_json, verify_after, lambda: upgrade_packages(project, packages)
+        project,
+        as_json,
+        verify_after,
+        lambda: upgrade_packages(project, packages, dry_run),
+        dry_run,
     )
+    if dry_run:
+        return
     if not change.created:
         success("Everything is already up to date.")
     elif packages:
@@ -689,13 +732,20 @@ def python_version_callback(
     return value
 
 
-@cli.command("upgrade-python", error_report=change_error_report)
+@cli.command(
+    "upgrade-python", error_report=change_error_report, report_options=("dry_run",)
+)
 @click.argument("version", callback=python_version_callback)
+@dry_run_option
 @env_option
 @json_option
 @verify_option
 def upgrade_python_cmd(
-    project: UVRevProject, version: str, as_json: bool, verify_after: bool | None
+    project: UVRevProject,
+    version: str,
+    dry_run: bool,
+    as_json: bool,
+    verify_after: bool | None,
 ) -> None:
     """Change the Python minor version of the environment
 
@@ -707,8 +757,14 @@ def upgrade_python_cmd(
         uvrev upgrade-python 3.14
     """
     change = run_operation(
-        project, as_json, verify_after, lambda: upgrade_python(project, version)
+        project,
+        as_json,
+        verify_after,
+        lambda: upgrade_python(project, version, dry_run),
+        dry_run,
     )
+    if dry_run:
+        return
     if not change.created:
         success(f"Python {version} is already used.")
     else:

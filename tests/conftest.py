@@ -122,3 +122,13 @@ def synced_project(sample_project: UVRevProject) -> UVRevProject:
     """The sample project with installed packages and a protected venv"""
     operations.sync_packages(sample_project)
     return sample_project
+
+
+@pytest.fixture
+def upgradeable_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
+    """Create a project with an uv.lock that can be updated"""
+    proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
+    operations.create_env(fake_basedir, constants.DEFAULT_ENV)
+    shutil.copytree(data_dir / "upgradeable", proj.project_path, dirs_exist_ok=True)
+    operations.create_revision(proj, "Add sampleproject")
+    return proj

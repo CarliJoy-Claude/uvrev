@@ -1,6 +1,5 @@
 import json
 import platform
-import shutil
 import sys
 from importlib.metadata import version
 from itertools import chain
@@ -72,16 +71,6 @@ def tmp_basedir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     base_dir = tmp_path / "tmp_basedir"
     monkeypatch.setenv("UVREV_BASE", str(base_dir))
     return base_dir
-
-
-@pytest.fixture
-def upgradeable_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
-    """Create a project with an uv.lock that can be updated"""
-    proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
-    operations.create_env(fake_basedir, constants.DEFAULT_ENV)
-    shutil.copytree(data_dir / "upgradeable", proj.project_path, dirs_exist_ok=True)
-    operations.create_revision(proj, "Add sampleproject")
-    return proj
 
 
 def parse_report(result: Result) -> dict[str, Any]:
@@ -716,7 +705,11 @@ class TestAddUpgradeAll:
         report = parse_report(result)
         assert report["command"] == "add"
         assert report["arguments"] == ["peppercorn"]
-        assert report["options"] == {"upgrade_all": True, "python": None}
+        assert report["options"] == {
+            "upgrade_all": True,
+            "python": None,
+            "dry_run": False,
+        }
         assert report["revision"] == 2
         assert report["changes"] == {
             "added": [],
@@ -742,7 +735,11 @@ class TestAddUpgradeAll:
 
         assert result.exit_code == 0
         report = parse_report(result)
-        assert report["options"] == {"upgrade_all": False, "python": None}
+        assert report["options"] == {
+            "upgrade_all": False,
+            "python": None,
+            "dry_run": False,
+        }
         assert report["changes"] == NO_CHANGES
         assert report["all_changed_dependencies"] == ["peppercorn"]
 
@@ -755,7 +752,11 @@ class TestAddUpgradeAll:
         assert result.exit_code == 1
         report = parse_report(result)
         assert report["status"] == "error"
-        assert report["options"] == {"upgrade_all": True, "python": None}
+        assert report["options"] == {
+            "upgrade_all": True,
+            "python": None,
+            "dry_run": False,
+        }
         assert report["revision"] == report["previous_revision"] == 1
 
 
@@ -921,7 +922,7 @@ class TestRemoveIgnoreMissing:
         assert "uv remove SampleProject\n" in result.stderr
         report = parse_report(result)
         assert report["arguments"] == ["SampleProject", "not-installed"]
-        assert report["options"] == {"ignore_missing": True}
+        assert report["options"] == {"ignore_missing": True, "dry_run": False}
         assert report["revision"] == 2
         assert report["dependency_changes"]["removed"] == ["sampleproject"]
 

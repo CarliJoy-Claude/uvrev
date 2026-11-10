@@ -6,6 +6,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable, Iterator, Mapping
 from importlib.metadata import distributions, version as package_version
 from pathlib import Path
@@ -34,6 +35,9 @@ from .report import RevisionChange
 from .settings import Settings
 from .terminal import warning
 from .types import Revision, SubprocessFailure, UVRevProject
+
+PYPROJECT_FILE = "pyproject.toml"
+LOCK_FILE = "uv.lock"
 
 
 def create_env(
@@ -278,17 +282,22 @@ def get_python_version(project: UVRevProject) -> Version | None:
         project.venv_path / "Scripts" / "python.exe",
     ):
         if python.exists():
-            try:
-                output = subprocess.run(
-                    (str(python), "-c", _PRINT_PYTHON_VERSION),
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                ).stdout
-            except subprocess.CalledProcessError as e:
-                raise SubprocessFailure(e) from e
-            return Version(output.strip())
+            return interpreter_version(python)
     return None
+
+
+def interpreter_version(python: Path) -> Version:
+    """Ask a Python interpreter for its exact version"""
+    try:
+        output = subprocess.run(
+            (str(python), "-c", _PRINT_PYTHON_VERSION),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except subprocess.CalledProcessError as e:
+        raise SubprocessFailure(e) from e
+    return Version(output.strip())
 
 
 def update_python_lock(project: UVRevProject) -> None:
@@ -356,6 +365,81 @@ def get_last_revision_number(project: UVRevProject) -> Revision:
     return Revision(last_rev)
 
 
+def committed_state(project: UVRevProject) -> Mapping[str, str]:
+    """Content of the tracked files in the last revision, by file name.
+
+    Files missing in the revision are empty.
+    """
+    paths = tracked_paths(project)
+    committed = committed_files(project, "HEAD", paths)
+    return {
+        path.name: git(
+            "show", f"HEAD:{path.name}", project=project, capture_output=True
+        )
+        if path.name in committed
+        else ""
+        for path in paths
+    }
+
+
+def current_state(project: UVRevProject) -> Mapping[str, str]:
+    """Current content of the tracked files, by file name (empty if missing)"""
+    return {
+        path.name: path.read_text() if path.exists() else ""
+        for path in tracked_paths(project)
+    }
+
+
+def is_same_state(old: Mapping[str, str], new: Mapping[str, str]) -> bool:
+    """True if two states of the tracked files describe the same environment.
+
+    This is also the case if only ``name`` was rewritten to ``name>=0``
+    (or back), which is the same requirement.
+    """
+    if old == new:
+        return True
+    others = (constants.PYTHON_VERSION_FILE, constants.PYTHON_VERSION_LOCK_FILE)
+    return all(old[name] == new[name] for name in others) and same_except_any_version(
+        old[PYPROJECT_FILE], new[PYPROJECT_FILE], old[LOCK_FILE], new[LOCK_FILE]
+    )
+
+
+def state_change(
+    old: Mapping[str, str],
+    new: Mapping[str, str],
+    previous_revision: Revision,
+    revision: Revision,
+) -> RevisionChange:
+    """Compare two states of the tracked files"""
+    return RevisionChange(
+        previous_revision,
+        revision,
+        packages=Diff(
+            parse_uv_lock_packages(old[LOCK_FILE]),
+            parse_uv_lock_packages(new[LOCK_FILE]),
+        ),
+        dependencies=Diff(
+            parse_pyproject_deps(old[PYPROJECT_FILE]),
+            parse_pyproject_deps(new[PYPROJECT_FILE]),
+        ),
+        python=Diff(
+            parse_python_lock(old[constants.PYTHON_VERSION_LOCK_FILE]),
+            parse_python_lock(new[constants.PYTHON_VERSION_LOCK_FILE]),
+        ),
+        environments=Diff(
+            parse_uv_environments(old[PYPROJECT_FILE]),
+            parse_uv_environments(new[PYPROJECT_FILE]),
+        ),
+    )
+
+
+def changelog_of(change: RevisionChange) -> str:
+    """Changelog of a change, as written in the commit of a revision"""
+    return create_changelog(
+        change.dependencies, change.packages, change.python, change.environments
+    )
+
+
 def create_revision(
     project: UVRevProject, message: str = "Update packages"
 ) -> RevisionChange:
@@ -372,68 +456,93 @@ def create_revision(
     last_rev = get_last_revision_number(project)
     update_python_lock(project)
 
-    # Get previous and current state (files missing in a revision are empty)
-    paths = tracked_paths(project)
-    committed = committed_files(project, "HEAD", paths)
-    old = {
-        path: git("show", f"HEAD:{path.name}", project=project, capture_output=True)
-        if path.name in committed
-        else ""
-        for path in paths
-    }
-    current = {path: path.read_text() if path.exists() else "" for path in paths}
+    old = committed_state(project)
+    current = current_state(project)
     if old == current:
         return RevisionChange(last_rev, last_rev)
-    others = (project.python_version_path, project.python_lock_path)
-    if all(old[path] == current[path] for path in others) and same_except_any_version(
-        old[project.pyproject_path],
-        current[project.pyproject_path],
-        old[project.lock_path],
-        current[project.lock_path],
-    ):
-        # only "name" was rewritten to "name>=0" (or back), which is the same
-        # requirement: keep the committed files instead of an empty revision
+    if is_same_state(old, current):
+        # only "name" was rewritten to "name>=0" (or back): keep the committed
+        # files instead of an empty revision
+        committed = (name for name, content in old.items() if content)
         git("checkout", "HEAD", "--", *committed, project=project)
         return RevisionChange(last_rev, last_rev)
 
-    deps = Diff(
-        parse_pyproject_deps(old[project.pyproject_path]),
-        parse_pyproject_deps(current[project.pyproject_path]),
-    )
-    packages = Diff(
-        parse_uv_lock_packages(old[project.lock_path]),
-        parse_uv_lock_packages(current[project.lock_path]),
-    )
-    python = Diff(
-        parse_python_lock(old[project.python_lock_path]),
-        parse_python_lock(current[project.python_lock_path]),
-    )
-
-    environments = Diff(
-        parse_uv_environments(old[project.pyproject_path]),
-        parse_uv_environments(current[project.pyproject_path]),
-    )
-
-    # Build changelog
-    changelog = create_changelog(deps, packages, python, environments)
-
     rev_num = Revision(last_rev + 1)
+    change = state_change(old, current, last_rev, rev_num)
 
     # Commit changes
     git(
         "add",
         "--",
-        *(path.name for path in paths if path.exists()),
+        *(path.name for path in tracked_paths(project) if path.exists()),
         project=project,
     )
 
-    commit_msg = f"(rev {rev_num}) {message}\n{changelog}"
+    commit_msg = f"(rev {rev_num}) {message}\n{changelog_of(change)}"
     git("commit", "-m", commit_msg, project=project)
 
     # Create annotated tag (can be signed)
     git("tag", "-m", commit_msg, "--annotate", f"rev_{rev_num}", project=project)
 
-    return RevisionChange(last_rev, rev_num, packages, deps, python, environments)
+    return change
+
+
+@contextlib.contextmanager
+def scratch_copy(project: UVRevProject) -> Iterator[UVRevProject]:
+    """A temporary copy of the files of an environment, for dry runs.
+
+    It has no venv and no git repository, so uv can resolve changes in it
+    (without syncing) while the environment stays untouched.
+    """
+    with tempfile.TemporaryDirectory(prefix="uvrev-dry-run-") as directory:
+        for path in (
+            project.pyproject_path,
+            project.lock_path,
+            project.python_version_path,
+        ):
+            if path.exists():
+                shutil.copy2(path, directory)
+        yield UVRevProject(Path(directory), project.settings)
+
+
+def preview_python(project: UVRevProject, scratch: UVRevProject) -> str:
+    """The exact Python version the environment would get, as lock file content.
+
+    Only predicted if the pinned version changed and uv finds an interpreter
+    for it. Otherwise the recorded version is kept: a newer patch version or an
+    interpreter uv would download is only seen by the real command.
+    """
+    recorded = (
+        project.python_lock_path.read_text()
+        if project.python_lock_path.exists()
+        else ""
+    )
+    if (
+        current_state(project)[constants.PYTHON_VERSION_FILE]
+        == (current_state(scratch)[constants.PYTHON_VERSION_FILE])
+    ):
+        return recorded
+    try:
+        python = uv("python", "find", project=scratch, capture_output=True).strip()
+    except SubprocessFailure:
+        return recorded
+    return f"{interpreter_version(Path(python))}\n"
+
+
+def preview_change(project: UVRevProject, scratch: UVRevProject) -> RevisionChange:
+    """What a command would change, from the scratch copy it was applied to.
+
+    No revision is created, so ``revision`` equals ``previous_revision``.
+    """
+    last_rev = get_last_revision_number(project)
+    old = committed_state(project)
+    new = {
+        **current_state(scratch),
+        constants.PYTHON_VERSION_LOCK_FILE: preview_python(project, scratch),
+    }
+    if is_same_state(old, new):
+        return RevisionChange(last_rev, last_rev)
+    return state_change(old, new, last_rev, last_rev)
 
 
 def restore_revision(project: UVRevProject, rev_num: Revision) -> RevisionChange:
@@ -528,11 +637,17 @@ def list_installed_packages(
     )
 
 
+def sync_or_lock(project: UVRevProject, sync: bool, *args: str) -> None:
+    """Run ``uv sync``, or ``uv lock`` to leave the venv untouched (dry run)"""
+    uv("sync" if sync else "lock", *args, project=project)
+
+
 def add_packages(
     project: UVRevProject,
     packages: tuple[str, ...],
     upgrade_all: bool = False,
     python: str | None = None,
+    dry_run: bool = False,
 ) -> RevisionChange:
     """Add packages to project.
 
@@ -547,29 +662,60 @@ def add_packages(
             afterwards, so everything is upgraded.
         python: Python version for ``uv add --python``, pinned afterwards
             with ``uv python pin``.
+        dry_run: Only report what would change.
 
     Returns:
         Changes compared to the previous revision.
     """
-    with reset_on_failure(project), writable_venv(project):
-        update_environments(project)
+
+    def add(target: UVRevProject, sync: bool) -> str:
+        update_environments(target)
         uv(
             "add",
             "--raw",
+            *(() if sync else ("--no-sync",)),
             *(("--upgrade",) if upgrade_all else ()),
             *(("--python", python) if python else ()),
             # uv keeps an existing constraint for a bare name, so a requirement
             # without version is given as "any version"
             *(any_version(package) for package in packages),
-            project=project,
+            project=target,
         )
         message = f"Added: {', '.join(packages)}"
         if python:
-            uv("python", "pin", python, project=project)
+            uv("python", "pin", python, project=target)
             message += f"; pinned Python {python}"
         if upgrade_all:
-            uv("sync", "--upgrade", project=project)
+            sync_or_lock(target, sync, "--upgrade")
             message += "; upgraded all packages"
+        return message
+
+    return apply_change(project, add, dry_run)
+
+
+def apply_change(
+    project: UVRevProject,
+    change: Callable[[UVRevProject, bool], str],
+    dry_run: bool,
+) -> RevisionChange:
+    """Apply a change to the environment and create a revision.
+
+    Args:
+        project: Project to change.
+        change: Runs the uv commands in the given project and returns the
+            message of the revision. Its second argument tells whether the
+            venv is synced, otherwise only the files may be changed.
+        dry_run: Apply the change to a scratch copy and only report it.
+
+    Returns:
+        Changes compared to the previous revision.
+    """
+    if dry_run:
+        with scratch_copy(project) as scratch:
+            change(scratch, False)
+            return preview_change(project, scratch)
+    with reset_on_failure(project), writable_venv(project):
+        message = change(project, True)
     return create_revision(project, message)
 
 
@@ -590,7 +736,10 @@ def split_missing(
 
 
 def remove_packages(
-    project: UVRevProject, packages: tuple[str, ...], ignore_missing: bool = False
+    project: UVRevProject,
+    packages: tuple[str, ...],
+    ignore_missing: bool = False,
+    dry_run: bool = False,
 ) -> RevisionChange:
     """Remove packages from project.
 
@@ -599,6 +748,7 @@ def remove_packages(
         packages: Package names to remove.
         ignore_missing: Skip packages that are no dependencies of the project
             instead of failing. If none is left, nothing is changed.
+        dry_run: Only report what would change.
 
     Returns:
         Changes compared to the previous revision.
@@ -610,10 +760,13 @@ def remove_packages(
         if not packages:
             last_rev = get_last_revision_number(project)
             return RevisionChange(last_rev, last_rev)
-    with reset_on_failure(project), writable_venv(project):
-        update_environments(project)
-        uv("remove", *packages, project=project)
-    return create_revision(project, f"Removed: {', '.join(packages)}")
+
+    def remove(target: UVRevProject, sync: bool) -> str:
+        update_environments(target)
+        uv("remove", *(() if sync else ("--no-sync",)), *packages, project=target)
+        return f"Removed: {', '.join(packages)}"
+
+    return apply_change(project, remove, dry_run)
 
 
 def list_venv_packages(project: UVRevProject) -> Mapping[NormalizedName, Version]:
@@ -681,34 +834,37 @@ def show_history(project: UVRevProject) -> str:
 
 
 def upgrade_packages(
-    project: UVRevProject, packages: tuple[str, ...]
+    project: UVRevProject, packages: tuple[str, ...], dry_run: bool = False
 ) -> RevisionChange:
     """Upgrade packages or all if no packages specified.
 
     Args:
         project: Project to upgrade packages in.
         packages: Package names to upgrade (empty for all).
+        dry_run: Only report what would change.
 
     Returns:
         Changes compared to the previous revision.
     """
-    with reset_on_failure(project), writable_venv(project):
-        update_environments(project)
+
+    def upgrade(target: UVRevProject, sync: bool) -> str:
+        update_environments(target)
         if packages:
             for pkg in packages:
-                uv("sync", "--upgrade-package", pkg, project=project)
-            message = f"Upgraded: {', '.join(packages)}"
-        else:
-            uv("sync", "--upgrade", project=project)
-            message = "Upgraded all packages"
+                sync_or_lock(target, sync, "--upgrade-package", pkg)
+            return f"Upgraded: {', '.join(packages)}"
+        sync_or_lock(target, sync, "--upgrade")
+        return "Upgraded all packages"
 
-    return create_revision(project, message)
+    return apply_change(project, upgrade, dry_run)
 
 
 PYTHON_MINOR_VERSION = re.compile(r"^\d+\.\d+$")
 
 
-def upgrade_python(project: UVRevProject, version: str) -> RevisionChange:
+def upgrade_python(
+    project: UVRevProject, version: str, dry_run: bool = False
+) -> RevisionChange:
     """Change the Python minor version of the environment (e.g. 3.12 to 3.14).
 
     Pins the version with ``uv python pin`` (which checks it against
@@ -719,6 +875,7 @@ def upgrade_python(project: UVRevProject, version: str) -> RevisionChange:
     Args:
         project: Project to change the Python version of.
         version: New Python version as ``major.minor``.
+        dry_run: Only report what would change.
 
     Returns:
         Changes compared to the previous revision.
@@ -736,12 +893,13 @@ def upgrade_python(project: UVRevProject, version: str) -> RevisionChange:
         else ""
     )
 
-    with reset_on_failure(project), writable_venv(project):
-        update_environments(project)
-        uv("python", "pin", version, project=project)
-        uv("sync", project=project)
+    def pin(target: UVRevProject, sync: bool) -> str:
+        update_environments(target)
+        uv("python", "pin", version, project=target)
+        sync_or_lock(target, sync)
+        return python_change_message(old, version)
 
-    return create_revision(project, python_change_message(old, version))
+    return apply_change(project, pin, dry_run)
 
 
 def python_change_message(old: str, new: str) -> str:

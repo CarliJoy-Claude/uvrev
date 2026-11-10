@@ -178,7 +178,7 @@ uvrev add pandas numpy --json
   "status": "success",
   "command": "add",
   "arguments": ["pandas", "numpy"],
-  "options": {"upgrade_all": false, "python": null},
+  "options": {"upgrade_all": false, "python": null, "dry_run": false},
   "revision": 42,
   "previous_revision": 41,
   "changes": {"added": ["numpy", "pandas", "pytz"], "updated": ["python-dateutil"], "downgraded": [], "removed": []},
@@ -210,7 +210,7 @@ uvrev add pandas numpy --json
 | `status` | `string` | `"success"` or `"error"`. |
 | `command` | `string` | The executed subcommand. |
 | `arguments` | `array[string]` | The arguments given to the subcommand. |
-| `options` | `object` | The options given to the subcommand, e.g. `{"upgrade_all": true, "python": null}` for `uvrev add --upgrade-all`. Empty for commands without options. |
+| `options` | `object` | The options given to the subcommand, e.g. `{"upgrade_all": true, "python": null, "dry_run": false}` for `uvrev add --upgrade-all`. Empty for commands without options. |
 | `revision` | `integer \| null` | Current revision after the command (unchanged if nothing changed). `null` only if it could not be determined. |
 | `previous_revision` | `integer \| null` | Revision before the command. A new revision was created if it differs from `revision`. |
 | `changes` | `object` | Changed packages (`added`, `updated`, `downgraded`, `removed`), including transitive ones. Taken from `uv.lock`, for `sync` from the installed packages. `updated` contains the upgrades, `downgraded` the packages whose version decreased. Every package is in one list only. |
@@ -225,6 +225,29 @@ uvrev add pandas numpy --json
 | `error_message` | `string \| null` | The error, if `status` is `"error"`. |
 
 All package names are [normalized](https://packaging.python.org/en/latest/specifications/name-normalization/) and sorted.
+
+### Dry run
+
+`add`, `remove`, `upgrade` and `upgrade-python` accept `--dry-run` (e.g. for the check mode of Ansible).
+It reports what the command would change, without touching the environment, its files or its revisions:
+
+```bash
+uvrev upgrade --dry-run          # shows the changelog the upgrade would have
+uvrev add --dry-run --json six   # the same report as without --dry-run
+```
+
+The report is the one of the real command, with these differences:
+
+- `options` contains `"dry_run": true`.
+- `revision` equals `previous_revision`, as no revision is created.
+- `python` (the exact interpreter version) is only predicted if the pinned Python version would change
+  and uv finds an interpreter for the new version. A newer patch version of the current Python,
+  or an interpreter uv would have to download, is only reported by the real command.
+- `verify` is always `null`: nothing is installed, so `--verify` is ignored.
+
+uvrev copies `pyproject.toml`, `uv.lock` and `.python-version` to a temporary folder and lets uv resolve
+the change there without installing anything (`uv add --no-sync`, `uv remove --no-sync`, `uv lock`).
+So a dry run needs the package index like the real command, but no disk space for packages.
 
 ### Reports of other commands
 
