@@ -897,6 +897,48 @@ class TestCliIntegration:
         assert report["all_changed_packages"] == []
 
 
+class TestEnvVariable:
+    """UVREV_ENV selects the environment, if --env is not given"""
+
+    @pytest.fixture
+    def envs(self, fake_basedir: Path) -> Path:
+        for name in ("base", "foo", "bar"):
+            create_fake_env(fake_basedir / name)
+        return fake_basedir
+
+    def test_default(self, invoke: Invoker, envs: Path) -> None:
+        assert invoke("path").stdout.strip() == str(envs / "base")
+
+    def test_variable(
+        self, invoke: Invoker, envs: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(constants.ENV_VARIABLE, "foo")
+
+        assert invoke("path").stdout.strip() == str(envs / "foo")
+        # the option wins
+        assert invoke("path", "-e", "bar").stdout.strip() == str(envs / "bar")
+
+    def test_wins_over_activated(
+        self, invoke: Invoker, envs: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VIRTUAL_ENV", str(envs / "bar" / ".venv"))
+        assert invoke("path").stdout.strip() == str(envs / "bar")
+
+        monkeypatch.setenv(constants.ENV_VARIABLE, "foo")
+
+        assert invoke("path").stdout.strip() == str(envs / "foo")
+
+    def test_missing(
+        self, invoke: Invoker, envs: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(constants.ENV_VARIABLE, "nope")
+
+        result = invoke("path")
+
+        assert result.exit_code == 2
+        assert "Project 'nope' does not exist" in result.output
+
+
 class TestCommon:
     @pytest.mark.parametrize(
         "cmd",

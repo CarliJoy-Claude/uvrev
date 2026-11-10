@@ -341,17 +341,21 @@ So it works for users without a git identity (e.g. service users), and never wai
 
 ## Environment Selection
 
-`uvrev` determines the active environment based on the **currently activated virtual environment**.
+The commands working on an environment use the first of:
 
-Activate an environment as usual:
+1. the option `--env <name>` (`-e <name>`),
+2. the environment variable `UVREV_ENV=<name>`,
+3. the **currently activated virtual environment**, if it is a uvrev environment,
+4. the environment `base`.
+
+So after activating an environment as usual, all `uvrev` commands operate on it:
 
 ```bash
-source .venv/bin/activate
+source "$(uvrev path -e myproject)/.venv/bin/activate"
+uvrev add pandas   # added to myproject
 ```
 
-Once activated, all `uvrev` commands operate on that environment automatically. No additional flags or environment variables are required.
-
-This mirrors standard Python workflows and avoids implicit global state.
+`uvrev env create [name]` and `uvrev env fix [name]` take the name as argument and don't use `UVREV_ENV`.
 
 ---
 

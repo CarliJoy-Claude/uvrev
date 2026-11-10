@@ -140,9 +140,10 @@ def env_option[F: Callable[..., Any]](f: F) -> F:
         "-e",
         "project",
         default=None,
-        show_default=constants.DEFAULT_ENV,
+        envvar=constants.ENV_VARIABLE,
         callback=env_option_callback,
-        help="Project/environment name (env: UVREV_ENV, default: base)",
+        help="Project/environment name (default: environment variable UVREV_ENV, "
+        "then the activated uvrev environment, then 'base')",
     )(f)
 
 

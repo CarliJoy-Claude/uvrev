@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The environment variable `UVREV_ENV` was documented in the help of `--env`, but not used.
+  The environment is now taken from `--env`, then `UVREV_ENV`, then the activated uvrev environment, then `base`.
+  See the [README](README.md#environment-selection).
 - `uvrev env create` failed for users without a git identity (`user.name` / `user.email`), e.g. service users,
   and left a half-created folder behind. The repository of an environment is now configured with uvrev's own
   identity (`uvrev <user@hostname>`) and without signing of commits and tags.

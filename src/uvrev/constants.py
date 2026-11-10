@@ -1,6 +1,8 @@
 from typing import Final
 
 DEFAULT_ENV: Final[str] = "base"
+# environment variable with the name of the environment, if --env is not given
+ENV_VARIABLE: Final[str] = "UVREV_ENV"
 INITIAL_COMMIT_MSG: Final[str] = "(rev 0) Initial project creation"
 # requested Python version (major.minor), read by uv
 PYTHON_VERSION_FILE: Final[str] = ".python-version"
