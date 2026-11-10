@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `uvrev remove --ignore-missing`: packages that are no dependencies are skipped instead of failing (names are
+  compared normalized). If none is left, the command succeeds without a new revision.
+
 ### Fixed
 
 - The environment variable `UVREV_ENV` was documented in the help of `--env`, but not used.

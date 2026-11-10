@@ -398,23 +398,44 @@ def add(
 
 @cli.command()
 @click.argument("packages", nargs=-1, required=True)
+@click.option(
+    "--ignore-missing",
+    is_flag=True,
+    default=False,
+    help="Skip packages that are no dependencies instead of failing",
+)
 @env_option
 @json_option
 @verify_option
 def remove(
     project: UVRevProject,
     packages: tuple[str, ...],
+    ignore_missing: bool,
     as_json: bool,
     verify_after: bool | None,
 ) -> None:
-    """Remove packages from the current project"""
+    """Remove packages from the current project
+
+    \b
+    Examples:
+        uvrev remove pandas
+        uvrev remove --ignore-missing pandas numpy   # fine if they are not installed
+    """
     change = run_operation(
         project,
         packages,
         as_json,
-        verified(project, verify_after, lambda: remove_packages(project, packages)),
+        verified(
+            project,
+            verify_after,
+            lambda: remove_packages(project, packages, ignore_missing),
+        ),
+        {"ignore_missing": ignore_missing},
     )
-    success(f"Removed {' '.join(packages)}.  Created revision {change.revision}.")
+    if change.created:
+        success(f"Removed {' '.join(packages)}.  Created revision {change.revision}.")
+    else:
+        success("Nothing to remove.")
 
 
 @cli.command()

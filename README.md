@@ -66,7 +66,7 @@ uvrev --help
 | `uvrev env list`   | List all UV projects |
 | `uvrev env fix`    | Mark an environment as created successfully (see [Creating Environments](#creating-environments)) |
 | `uvrev add`        | Add packages to the current project (`--upgrade-all` also upgrades all others, `--python` changes the Python version) |
-| `uvrev remove`     | Remove packages from the current project |
+| `uvrev remove`     | Remove packages from the current project (`--ignore-missing` skips packages that are no dependencies) |
 | `uvrev sync`       | Sync project dependencies |
 | `uvrev upgrade`    | Upgrade all or the given packages |
 | `uvrev upgrade-python` | Change the Python minor version (e.g. `3.12` to `3.14`) |

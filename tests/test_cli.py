@@ -897,6 +897,49 @@ class TestCliIntegration:
         assert report["all_changed_packages"] == []
 
 
+class TestRemoveIgnoreMissing:
+    def test_fails_without_option(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """Without --ignore-missing nothing is removed, if one package is missing"""
+        result = invoke("remove", "sampleproject", "not-installed")
+
+        assert result.exit_code == 1
+        deps = parse_uv_lock_packages(upgradeable_project.lock_path.read_text())
+        assert "sampleproject" in deps
+
+    def test_skips_missing(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        # the names are compared normalized
+        result = invoke(
+            "remove", "--ignore-missing", "SampleProject", "not-installed", "--json"
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Not a dependency, skipped: not-installed" in result.stderr
+        assert "uv remove SampleProject\n" in result.stderr
+        report = parse_report(result)
+        assert report["arguments"] == ["SampleProject", "not-installed"]
+        assert report["options"] == {"ignore_missing": True}
+        assert report["revision"] == 2
+        assert report["dependency_changes"]["removed"] == ["sampleproject"]
+
+    def test_nothing_left(
+        self, invoke: Invoker, upgradeable_project: UVRevProject
+    ) -> None:
+        """If no package is a dependency, nothing happens and no revision is created"""
+        result = invoke("remove", "--ignore-missing", "not-installed", "--json")
+
+        assert result.exit_code == 0, result.output
+        assert "Nothing to remove" in result.stderr
+        assert "uv remove" not in result.stderr
+        report = parse_report(result)
+        assert report["status"] == "success"
+        assert report["revision"] == report["previous_revision"] == 1
+        assert report["all_changed_dependencies"] == []
+
+
 class TestEnvVariable:
     """UVREV_ENV selects the environment, if --env is not given"""
 

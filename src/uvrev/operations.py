@@ -29,6 +29,7 @@ from .parser import (
 from .protection import unprotect, writable_venv
 from .report import RevisionChange
 from .settings import Settings
+from .terminal import warning
 from .types import Revision, SubprocessFailure, UVRevProject
 
 
@@ -554,16 +555,43 @@ def add_packages(
     return create_revision(project, message)
 
 
-def remove_packages(project: UVRevProject, packages: tuple[str, ...]) -> RevisionChange:
+def split_missing(
+    project: UVRevProject, packages: tuple[str, ...]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split package names into dependencies of the project and others.
+
+    The names are compared normalized (``Foo_Bar`` is ``foo-bar``).
+
+    Returns:
+        The dependencies and the names that are no dependencies.
+    """
+    dependencies = parse_pyproject_deps(project.pyproject_path.read_text())
+    present = tuple(p for p in packages if canonicalize_name(p) in dependencies)
+    missing = tuple(p for p in packages if canonicalize_name(p) not in dependencies)
+    return present, missing
+
+
+def remove_packages(
+    project: UVRevProject, packages: tuple[str, ...], ignore_missing: bool = False
+) -> RevisionChange:
     """Remove packages from project.
 
     Args:
         project: Project to remove packages from.
         packages: Package names to remove.
+        ignore_missing: Skip packages that are no dependencies of the project
+            instead of failing. If none is left, nothing is changed.
 
     Returns:
         Changes compared to the previous revision.
     """
+    if ignore_missing:
+        packages, missing = split_missing(project, packages)
+        if missing:
+            warning(f"Not a dependency, skipped: {', '.join(missing)}")
+        if not packages:
+            last_rev = get_last_revision_number(project)
+            return RevisionChange(last_rev, last_rev)
     with reset_on_failure(project), writable_venv(project):
         update_environments(project)
         uv("remove", *packages, project=project)
