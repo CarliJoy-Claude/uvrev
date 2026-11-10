@@ -19,9 +19,10 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   current state is green.
 - Validate before every commit with `prek run --all-files`
   (ruff format, ruff check, mypy strict, doctests, tests, 100% coverage).
-- Run it like CI as well: uv version from `.gitlab-ci.yml`, `UV_FROZEN=true`,
-  on the lowest and highest Python of the matrix (e.g. `UV_PYTHON=3.12` and `3.15`).
-  CI also checks the lock file: `uv lock --check`.
+- Run it like CI as well: uv version from `.gitlab-ci.yml`, `UV_LOCKED=true`,
+  on the lowest and highest Python of the matrix (e.g. `UV_PYTHON=3.12` and `3.15`),
+  and once as a normal user with a system Python (`UV_PYTHON_PREFERENCE=system`,
+  `UV_PYTHON_DOWNLOADS=false`): both found bugs that the default run as root hid.
 - Keep the history clear: one commit per logical step, gitmoji style
   (✨ feature, 🐛 fix, ♻️ refactoring, 📝 docs, 👷 CI, ⬆️ dependencies, 🏷️ typing).
 - Update `CHANGELOG.md` (Keep a Changelog): new entries go to `[Unreleased]`.
@@ -48,6 +49,18 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
 - stdout is reserved for results (e.g. the `--json` report). Logs, executed
   commands and the output of `uv`, `git` and `chmod` go to stderr.
   Only `uvrev run` and the tools of `uvrev tool run` write to stdout.
+- JSON reports (`--json`): all commands are `ReportingCommand`s (`cli.py`), which
+  print a report for every failure. A command with `--json` gives it an
+  `error_report` builder and the `report_options` shown as `options`.
+  Never raise for a failure after printing a success report.
+  `schema_version` only changes if existing fields change; new fields and new
+  keys in `options` are added without a new version.
+- Errors found while parsing options (unknown `--env`, invalid settings) are
+  stored in `ctx.meta` and raised when the command is invoked, so they are
+  reported as well. Usage errors (exit code 2) print no report.
+- A command that changes the files of an environment goes through
+  `apply_change()` in `operations.py`, which also gives it `--dry-run`
+  (the change runs in a scratch copy with `--no-sync` / `uv lock`).
 - Import cycle to keep in mind: `types` imports `settings`, `commands` imports
   `types`. So `settings` must not import `commands`.
 
@@ -82,6 +95,10 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
 - Integration tests use the uv cache and PyPI (`tests/data/sample`,
   `tests/data/upgradeable`). The `uv.lock` of `tests/data/sample` does not
   match its `pyproject.toml`: run `uv lock` before using `--locked`.
+- The `uv.lock` of `tests/data/upgradeable` requires Python 3.14: tests must not
+  install it with `uv sync --frozen`, as CI also runs older Python versions.
+- To test a missing command, restrict `PATH` to a folder with symlinks to the
+  others (`only_commands` in `tests/test_errors.py`).
 - There is no `tests/__init__.py`: import helpers with `from conftest import ...`.
 
 ## Domain knowledge
@@ -116,6 +133,12 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   `_virtualenv.py` / `_virtualenv.pth` are not part of any `RECORD`.
 - `uv sync --frozen --check` tells whether the venv matches `uv.lock`.
 - `uv sync --output-format json` is still a preview schema: do not rely on it yet.
+- `uv add NAME` keeps an existing constraint of NAME (no flag loosens it), so a
+  requirement without version is passed as `NAME>=0` (`any_version()`), which
+  is treated like no constraint everywhere (`ANY_VERSION` in `parser.py`).
+- The repository of an environment has its own git identity (`uvrev`,
+  `<user>@<hostname>`) and no signing (`configure_git()`), so uvrev works for
+  service users and never waits for a passphrase.
 - `uv add` keeps the locked versions of other packages; with `--upgrade-all`
   use `uv add --upgrade`, then `uv sync --upgrade`.
 
