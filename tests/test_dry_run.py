@@ -46,8 +46,11 @@ def report(result: Result) -> dict[str, Any]:
 
 @pytest.fixture
 def project(upgradeable_project: UVRevProject) -> UVRevProject:
-    """Project with sampleproject 3.0.0 (upgradeable to 4.0.0) and peppercorn 0.5"""
-    operations.sync_packages(upgradeable_project)
+    """Project with sampleproject 3.0.0 (upgradeable to 4.0.0) and peppercorn 0.5
+
+    The packages are locked, but not installed: the lock file of the test data
+    can not be synced with every Python version.
+    """
     return upgradeable_project
 
 
