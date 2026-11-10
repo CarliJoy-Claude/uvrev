@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `--json` for `env create`, `protect`, `unprotect` and `verify`, so a caller can tell whether anything changed.
+  See the [README](README.md#reports-of-other-commands).
+  - `env create`: `created`, `path` and `python` (the pinned version).
+  - `protect` / `unprotect`: `changed`, `protected` and `path`.
+  - `verify`: `problems`, `remaining_problems` and `fixed`.
+  - `schema_version` stays 2: fields are only added. It changes only if existing fields change.
+- `uvrev env create --python` for an existing environment warns if the environment uses another Python version
+  (the option is still not applied).
 - `uvrev remove --ignore-missing`: packages that are no dependencies are skipped instead of failing (names are
   compared normalized). If none is left, the command succeeds without a new revision.
 

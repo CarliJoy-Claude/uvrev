@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -31,16 +32,26 @@ from .operations import (
     upgrade_python,
 )
 from .protection import (
+    permissions,
     protect as protect_venv,
     unprotect as unprotect_venv,
     writable_venv,
 )
-from .report import Option, Report, RevisionChange
+from .report import (
+    SCHEMA_VERSION,
+    EnvCreateReport,
+    Option,
+    ProtectReport,
+    Report,
+    RevisionChange,
+    VerifyReport,
+    VerifySummary,
+)
 from .settings import Settings, load_settings
-from .terminal import error, fatal_error, success, warning
+from .terminal import fatal_error, success, warning
 from .tool import ToolServices, run_tool
 from .types import Revision, SubprocessFailure, UVRevProject
-from .verify import Problem, verify
+from .verify import Problem, VerifyResult, verify
 
 
 def get_base_dir() -> Path:
@@ -70,7 +81,7 @@ def warn_if_incomplete(project: UVRevProject) -> None:
         )
 
 
-type Verifier = Callable[[UVRevProject, bool], tuple[Problem, ...]]
+type Verifier = Callable[[UVRevProject, bool], VerifyResult]
 
 
 @dataclass(frozen=True)
@@ -228,6 +239,27 @@ def report_options(ctx: click.Context) -> Mapping[str, Option]:
     return {name: ctx.params.get(name) for name in names}
 
 
+def report_command(ctx: click.Context) -> str:
+    """Name of the command in the report, e.g. ``add`` or ``env create``"""
+    names: list[str] = []
+    current: click.Context | None = ctx
+    while current is not None and current.parent is not None:
+        names.append(current.info_name or "")
+        current = current.parent
+    return " ".join(reversed(names))
+
+
+def report_header(ctx: click.Context, error_message: str | None) -> dict[str, Any]:
+    """The common fields of a report, as arguments for a CommandReport"""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": "error" if error_message else "success",
+        "command": report_command(ctx),
+        "arguments": report_arguments(ctx),
+        "options": report_options(ctx),
+    }
+
+
 def change_error_report(ctx: click.Context, message: str) -> Report:
     """Report of a failed command that changes an environment"""
     project: UVRevProject = ctx.params["project"]
@@ -237,7 +269,7 @@ def change_error_report(ctx: click.Context, message: str) -> Report:
         # broken or missing environment
         revision = None
     return Report.from_error(
-        ctx.info_name or "",
+        report_command(ctx),
         report_arguments(ctx),
         revision,
         message,
@@ -334,16 +366,19 @@ def echo_problems(problems: tuple[Problem, ...], err: bool = False) -> None:
         )
 
 
-def fix_venv(project: UVRevProject, err: bool = False) -> None:
+def fix_venv(project: UVRevProject, err: bool = False) -> VerifyResult:
     """Verify and fix the venv.
 
     Raises:
         click.ClickException: If problems remain that could not be fixed.
     """
-    problems = get_services(click.get_current_context()).verify(project, True)
-    echo_problems(problems, err=err)
-    if errors := [problem for problem in problems if not problem.is_warning]:
-        raise click.ClickException(f"{len(errors)} problem(s) could not be fixed")
+    result = get_services(click.get_current_context()).verify(project, True)
+    echo_problems(result.remaining, err=err)
+    if result.errors:
+        raise click.ClickException(
+            f"{len(result.errors)} problem(s) could not be fixed"
+        )
+    return result
 
 
 def verified(
@@ -377,7 +412,7 @@ def run_operation(
     if as_json:
         ctx = click.get_current_context()
         report = Report.from_change(
-            ctx.info_name or "", report_arguments(ctx), change, report_options(ctx)
+            report_command(ctx), report_arguments(ctx), change, report_options(ctx)
         )
         click.echo(report.to_json())
     return change
@@ -398,7 +433,47 @@ def env() -> None:
     """Manage environments"""
 
 
-@env.command("create")
+def pinned_python(project: UVRevProject) -> str | None:
+    """The Python version pinned for the environment, None if unknown"""
+    if not project.python_version_path.is_file():
+        return None
+    return project.python_version_path.read_text().strip() or None
+
+
+def python_minor(version: str | None) -> str | None:
+    """The major.minor part of a Python version request, None if it has none
+
+    >>> python_minor("3.12"), python_minor("3.12.4"), python_minor("pypy")
+    ('3.12', '3.12', None)
+    """
+    match = re.match(r"\d+\.\d+", version or "")
+    return match.group() if match else None
+
+
+def env_create_report(
+    ctx: click.Context, created: bool, error_message: str | None = None
+) -> EnvCreateReport:
+    project = UVRevProject(
+        get_base_dir() / (ctx.params.get("name") or constants.DEFAULT_ENV)
+    )
+    return EnvCreateReport(
+        **report_header(ctx, error_message),
+        created=created,
+        path=str(project.project_path),
+        python=pinned_python(project),
+        error_message=error_message,
+    )
+
+
+def env_create_error_report(ctx: click.Context, message: str) -> EnvCreateReport:
+    return env_create_report(ctx, created=False, error_message=message)
+
+
+@env.command(
+    "create",
+    error_report=env_create_error_report,
+    report_options=("python", "force"),
+)
 @click.argument("name", required=False)
 @click.option(
     "--python",
@@ -412,14 +487,16 @@ def env() -> None:
     help="Delete an existing folder of the environment first, "
     "if the environment was not created successfully",
 )
+@json_option
 @click.pass_context
 def env_create(
-    ctx: click.Context, name: str | None, python: str | None, force: bool
+    ctx: click.Context, name: str | None, python: str | None, force: bool, as_json: bool
 ) -> None:
     """Create a new UV project with revision tracking
 
     Running it again for an environment that was created successfully does
-    nothing. In this case --python is NOT checked against the environment.
+    nothing. In this case --python is NOT applied: a warning is shown if the
+    environment uses another version, and --json reports the pinned version.
 
     An environment is created successfully, if it contains the file
     .uvrev_created_successfully, written as the last step.
@@ -431,12 +508,21 @@ def env_create(
     """
     project_name = name or constants.DEFAULT_ENV
     project = UVRevProject(get_base_dir() / project_name)
-    if project.created_successfully():
+    created = not project.created_successfully()
+    if created:
+        create_env(get_base_dir(), project_name, python, force, get_settings(ctx))
+        success(f"Project '{project_name}' created at {project.project_path}")
+    else:
         success(f"Project '{project_name}' already exists at {project.project_path}")
-        return
-
-    create_env(get_base_dir(), project_name, python, force, get_settings(ctx))
-    success(f"Project '{project_name}' created at {project.project_path}")
+        pinned = pinned_python(project)
+        wanted = python_minor(python)
+        if wanted and pinned and wanted != python_minor(pinned):
+            warning(
+                f"Project '{project_name}' uses Python {pinned}, --python {python} "
+                f"is ignored. Change it with 'uvrev upgrade-python {wanted}'."
+            )
+    if as_json:
+        click.echo(env_create_report(ctx, created).to_json())
 
 
 @env.command("fix")
@@ -715,48 +801,118 @@ def run(project: UVRevProject, run_args: tuple[str, ...]) -> None:
     uv("run", "--no-sync", *run_args, project=project, keep_stdout=True)
 
 
-@cli.command()
+def protect_report(
+    ctx: click.Context,
+    changed: bool,
+    protected: bool | None,
+    error_message: str | None = None,
+) -> ProtectReport:
+    project: UVRevProject = ctx.params["project"]
+    return ProtectReport(
+        **report_header(ctx, error_message),
+        changed=changed,
+        protected=protected,
+        path=str(project.venv_path),
+        error_message=error_message,
+    )
+
+
+def protect_error_report(ctx: click.Context, message: str) -> ProtectReport:
+    return protect_report(ctx, changed=False, protected=None, error_message=message)
+
+
+def change_protection(
+    project: UVRevProject, change: Callable[[UVRevProject], None]
+) -> bool:
+    """Protect or unprotect the venv.
+
+    Returns:
+        True if permissions were changed.
+    """
+    before = permissions(project.venv_path)
+    change(project)
+    return permissions(project.venv_path) != before
+
+
+@cli.command(error_report=protect_error_report)
 @env_option
-def protect(project: UVRevProject) -> None:
+@json_option
+@click.pass_context
+def protect(ctx: click.Context, project: UVRevProject, as_json: bool) -> None:
     """Make the venv read-only, so it can not be changed by accident"""
-    protect_venv(project)
+    changed = change_protection(project, protect_venv)
     success(f"Protected {project.venv_path}")
     if not project.settings.protect:
         warning(
             "Protection is disabled, so uvrev does not make the venv writable "
             "for changes. Run 'uvrev unprotect' before changing the environment."
         )
+    if as_json:
+        click.echo(protect_report(ctx, changed, protected=True).to_json())
 
 
-@cli.command()
+@cli.command(error_report=protect_error_report)
 @env_option
-def unprotect(project: UVRevProject) -> None:
+@json_option
+@click.pass_context
+def unprotect(ctx: click.Context, project: UVRevProject, as_json: bool) -> None:
     """Make the venv writable"""
-    unprotect_venv(project)
+    changed = change_protection(project, unprotect_venv)
     success(f"{project.venv_path} is writable")
     if project.settings.protect:
         warning("The next change of the environment protects it again.")
+    if as_json:
+        click.echo(protect_report(ctx, changed, protected=False).to_json())
 
 
-@cli.command("verify")
+def verify_report(
+    ctx: click.Context, result: VerifyResult, error_message: str | None = None
+) -> VerifyReport:
+    summary = VerifySummary.from_result(result)
+    return VerifyReport(
+        **report_header(ctx, error_message),
+        problems=summary.problems,
+        remaining_problems=summary.remaining_problems,
+        fixed=summary.fixed,
+        error_message=error_message,
+    )
+
+
+def verify_error_report(ctx: click.Context, message: str) -> VerifyReport:
+    return verify_report(ctx, VerifyResult(), message)
+
+
+@cli.command("verify", error_report=verify_error_report, report_options=("fix",))
 @click.option("--fix", is_flag=True, help="Fix the problems found")
 @env_option
-def verify_cmd(project: UVRevProject, fix: bool) -> None:
+@json_option
+@click.pass_context
+def verify_cmd(
+    ctx: click.Context, project: UVRevProject, fix: bool, as_json: bool
+) -> None:
     """Check the venv against the RECORD files of the installed packages
 
     Finds missing or modified files, untracked files and packages not in sync
-    with uv.lock. With --fix the affected packages are reinstalled and the venv
-    is protected again (if enabled), untracked files are only reported.
+    with uv.lock. With --fix the affected packages are removed from the uv
+    cache and reinstalled, and the venv is protected again (if enabled).
+    Untracked files are only reported.
+
+    The exit code is 1 if problems remain (warnings don't count).
     """
-    if fix:
-        fix_venv(project)
-        success("Environment is fine.")
-        return
-    problems = get_services(click.get_current_context()).verify(project, False)
-    echo_problems(problems)
-    if errors := [problem for problem in problems if not problem.is_warning]:
-        error(f"{len(errors)} problem(s) found, fix them with 'uvrev verify --fix'")
-        sys.exit(1)
+    result = get_services(ctx).verify(project, fix)
+    # stdout is reserved for the report
+    echo_problems(result.remaining, err=as_json)
+    message = None
+    if result.errors and fix:
+        message = f"{len(result.errors)} problem(s) could not be fixed"
+    elif result.errors:
+        message = (
+            f"{len(result.errors)} problem(s) found, fix them with 'uvrev verify --fix'"
+        )
+    if as_json:
+        click.echo(verify_report(ctx, result, message).to_json())
+    if message:
+        fatal_error(message)
     success("Environment is fine.")
 
 

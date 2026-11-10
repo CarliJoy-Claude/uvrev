@@ -146,6 +146,29 @@ def _is_synced(project: UVRevProject) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class VerifyResult:
+    """Outcome of verifying (and fixing) a venv"""
+
+    # found before fixing
+    problems: tuple[Problem, ...] = ()
+    # left after fixing, the same as problems if nothing was fixed
+    remaining: tuple[Problem, ...] = ()
+    # True if fixing repaired at least one problem
+    fixed: bool = False
+
+    @property
+    def errors(self) -> tuple[Problem, ...]:
+        """The remaining problems that are no warnings
+
+        >>> warning = Problem("untracked", Path("a.py"))
+        >>> error = Problem("modified", Path("b.py"))
+        >>> VerifyResult((warning, error), (warning, error)).errors == (error,)
+        True
+        """
+        return tuple(problem for problem in self.remaining if not problem.is_warning)
+
+
 def find_problems(project: UVRevProject) -> tuple[Problem, ...]:
     """Find all deviations of the venv from the installed packages and uv.lock"""
     problems = list(_check_records(project))
@@ -154,7 +177,7 @@ def find_problems(project: UVRevProject) -> tuple[Problem, ...]:
     return tuple(problems)
 
 
-def verify(project: UVRevProject, fix: bool = False) -> tuple[Problem, ...]:
+def verify(project: UVRevProject, fix: bool = False) -> VerifyResult:
     """Verify the venv and optionally fix it.
 
     Fixing reinstalls packages with missing or modified files,
@@ -172,11 +195,11 @@ def verify(project: UVRevProject, fix: bool = False) -> tuple[Problem, ...]:
         fix: Fix the problems.
 
     Returns:
-        The (remaining) problems.
+        The problems found and those remaining after fixing.
     """
     problems = find_problems(project)
     if not fix:
-        return problems
+        return VerifyResult(problems, problems)
 
     reinstall = sorted(
         {
@@ -196,4 +219,5 @@ def verify(project: UVRevProject, fix: bool = False) -> tuple[Problem, ...]:
             *(f"--reinstall-package={package}" for package in reinstall),
             project=project,
         )
-    return find_problems(project)
+    remaining = find_problems(project)
+    return VerifyResult(problems, remaining, fixed=remaining != problems)

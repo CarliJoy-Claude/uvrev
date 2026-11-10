@@ -158,8 +158,15 @@ or `UVREV_PYTHON_VERSIONS_SUPPORTED=3.12:3.14` (`3.12,3.14` works as well).
 
 ## JSON Output
 
-The commands that change an environment (`add`, `remove`, `sync`, `upgrade`, `upgrade-python`, `restore`) accept `--json`.
-Then only a JSON report is written to **stdout**; all logs and the output of `uv` and `git` go to **stderr**.
+With `--json` only a JSON report is written to **stdout**; all logs and the output of `uv` and `git` go to **stderr**.
+It is accepted by
+
+- the commands that change the packages of an environment (`add`, `remove`, `sync`, `upgrade`, `upgrade-python`,
+  `restore`), which write the *change report* described here,
+- `env create`, `protect`, `unprotect` and `verify`, see [Reports of other commands](#reports-of-other-commands).
+
+All reports start with the fields `schema_version`, `status`, `command`, `arguments` and `options`
+and end with `error_message`.
 
 ```bash
 uvrev add pandas numpy --json
@@ -198,7 +205,7 @@ uvrev add pandas numpy --json
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_version` | `integer` | Version of this format, currently `2`. |
+| `schema_version` | `integer` | Version of this format, currently `2`. It only changes if existing fields change or are removed: new fields and new keys in `options` are added without a new version, so ignore fields you don't know. |
 | `status` | `string` | `"success"` or `"error"`. |
 | `command` | `string` | The executed subcommand. |
 | `arguments` | `array[string]` | The arguments given to the subcommand. |
@@ -216,6 +223,51 @@ uvrev add pandas numpy --json
 | `error_message` | `string \| null` | The error, if `status` is `"error"`. |
 
 All package names are [normalized](https://packaging.python.org/en/latest/specifications/name-normalization/) and sorted.
+
+### Reports of other commands
+
+`uvrev env create [name] --json` (command `env create`, options `python` and `force`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `created` | `boolean` | `false` if the environment existed already (nothing was done). |
+| `path` | `string` | Path of the project of the environment. |
+| `python` | `string \| null` | The pinned Python version (`major.minor`) of the environment, also if it existed already. `null` if unknown. |
+
+`uvrev protect --json` and `uvrev unprotect --json`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `changed` | `boolean` | `true` if permissions were changed (compared before and after `chmod`). |
+| `protected` | `boolean \| null` | The state afterwards, `null` if the command failed. |
+| `path` | `string` | Path of the `.venv`. |
+
+`uvrev verify [--fix] --json` (option `fix`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `problems` | `array[object]` | The problems found (before fixing). Each has `kind` (`missing`, `modified`, `not_synced` or `untracked`), `path`, `package` (`string \| null`) and `is_warning`. |
+| `remaining_problems` | `array[object]` | The problems left after `--fix`, the same as `problems` without `--fix`. |
+| `fixed` | `boolean` | `true` if `--fix` repaired at least one problem. |
+
+If problems that are no warnings remain, `status` is `"error"`, `error_message` says how many, and the exit code is `1`.
+
+```json
+{
+  "schema_version": 2,
+  "status": "success",
+  "command": "verify",
+  "arguments": [],
+  "options": {"fix": true},
+  "problems": [
+    {"kind": "modified", "path": "/envs/base/.venv/lib/python3.14/site-packages/six.py", "package": "six", "is_warning": false}
+  ],
+  "remaining_problems": [],
+  "fixed": true,
+  "error_message": null
+}
+```
+
 ### Failures
 
 With `--json`, **every** failure after the command line was parsed writes a report with `"status": "error"`
@@ -325,7 +377,9 @@ The lock file is only valid on the platform it was created on.
 The file is ignored by git (`.git/info/exclude`).
 
 - If the environment was created successfully before, `uvrev env create` does nothing.
-  The `--python` version is **not** checked against the existing environment.
+  `--python` is **not** applied to the existing environment: uvrev warns if the environment uses another
+  version, and `--json` reports the pinned version as `python` (and `"created": false`).
+  Change the version with `uvrev upgrade-python`.
 - If the folder exists without the file (e.g. an aborted `uvrev env create`), it fails.
   `uvrev env create --force` deletes the folder and creates the environment again.
 - Commands using an environment without the file warn about it.

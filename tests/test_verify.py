@@ -12,7 +12,7 @@ from uvrev.cli import Services, cli
 from uvrev.protection import unprotect
 from uvrev.settings import load_settings
 from uvrev.types import UVRevProject
-from uvrev.verify import Problem, find_problems, verify
+from uvrev.verify import Problem, VerifyResult, find_problems, verify
 
 SAMPLE = NormalizedName("sampleproject")
 
@@ -20,8 +20,9 @@ SAMPLE = NormalizedName("sampleproject")
 def invoke_unfixable(*args: str) -> Result:
     """Invoke the cli with a verify that always leaves a problem"""
 
-    def unfixable(project: UVRevProject, fix: bool) -> tuple[Problem, ...]:
-        return (Problem("modified", Path("broken.py"), None),)
+    def unfixable(project: UVRevProject, fix: bool) -> VerifyResult:
+        problems = (Problem("modified", Path("broken.py"), None),)
+        return VerifyResult(problems, problems)
 
     services = Services(load_settings(), verify=unfixable)
     return CliRunner().invoke(cli, args=args, obj=services)
@@ -123,9 +124,10 @@ class TestPoisonedCache:
         unprotect(hardlinked_project)
         module(hardlinked_project).write_text("print('poisoned')")
 
-        problems = verify(hardlinked_project, fix=True)
+        result = verify(hardlinked_project, fix=True)
 
-        assert problems == ()
+        assert result.remaining == ()
+        assert result.fixed
         assert "poisoned" not in module(hardlinked_project).read_text()
 
 
@@ -139,10 +141,13 @@ class TestVerifyFix:
         extra = synced_project.site_packages[0] / "extra.py"
         extra.write_text("")
 
-        problems = verify(synced_project, fix=True)
+        result = verify(synced_project, fix=True)
 
         # only the untracked file is left, it may be someone's work
-        assert problems == (Problem("untracked", extra),)
+        assert result.remaining == (Problem("untracked", extra),)
+        assert result.errors == ()
+        assert result.fixed
+        assert Problem("modified", module(synced_project), SAMPLE) in result.problems
         assert "changed" not in module(synced_project).read_text()
         assert writable_paths(synced_project.venv_path) == ()
 
@@ -150,7 +155,7 @@ class TestVerifyFix:
         """--fix protects the venv again in any case"""
         unprotect(synced_project)
 
-        assert verify(synced_project, fix=True) == ()
+        assert verify(synced_project, fix=True) == VerifyResult()
         assert writable_paths(synced_project.venv_path) == ()
 
 

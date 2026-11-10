@@ -9,6 +9,7 @@ from packaging.version import Version
 
 from .differ import Changes, Diff, Names, VersionChange
 from .types import Revision
+from .verify import Problem, VerifyResult
 
 SCHEMA_VERSION: Final[int] = 2
 
@@ -222,3 +223,110 @@ class Report:
         }
         """
         return json.dumps(asdict(self), indent=2)
+
+
+@dataclass(frozen=True)
+class CommandReport:
+    """Common fields of the JSON reports that are no change reports.
+
+    The subclasses add the fields of their command, ``error_message`` is last.
+    """
+
+    schema_version: int
+    status: Literal["success", "error"]
+    command: str
+    arguments: tuple[str, ...]
+    options: Mapping[str, Option]
+
+    def to_json(self) -> str:
+        """Serialize the report, tuples become JSON arrays."""
+        return json.dumps(asdict(self), indent=2)
+
+
+@dataclass(frozen=True)
+class EnvCreateReport(CommandReport):
+    """Report of ``uvrev env create``
+
+    >>> report = EnvCreateReport(2, "success", "create", ("demo",), {}, True, "/envs/demo", "3.14", None)
+    >>> json.loads(report.to_json())["created"]
+    True
+    """
+
+    # False if the environment existed already
+    created: bool
+    # path of the project of the environment
+    path: str
+    # pinned Python version (major.minor), None if unknown
+    python: str | None
+    error_message: str | None
+
+
+@dataclass(frozen=True)
+class ProtectReport(CommandReport):
+    """Report of ``uvrev protect`` and ``uvrev unprotect``"""
+
+    # True if permissions were changed
+    changed: bool
+    # state afterwards, None if unknown (the command failed)
+    protected: bool | None
+    # path of the venv
+    path: str
+    error_message: str | None
+
+
+@dataclass(frozen=True)
+class ProblemEntry:
+    """A problem found by ``uvrev verify``"""
+
+    kind: str
+    path: str
+    package: str | None
+    is_warning: bool
+
+    @classmethod
+    def from_problem(cls, problem: Problem) -> Self:
+        return cls(
+            kind=problem.kind,
+            path=str(problem.path),
+            package=problem.package,
+            is_warning=problem.is_warning,
+        )
+
+
+@dataclass(frozen=True)
+class VerifySummary:
+    """Result of verifying a venv, as shown in the reports
+
+    >>> from pathlib import Path
+    >>> problem = Problem("modified", Path("a.py"), canonicalize_name("pkg"))
+    >>> summary = VerifySummary.from_result(VerifyResult((problem,), (), fixed=True))
+    >>> summary.problems
+    (ProblemEntry(kind='modified', path='a.py', package='pkg', is_warning=False),)
+    >>> summary.remaining_problems, summary.fixed
+    ((), True)
+    """
+
+    # found before fixing
+    problems: tuple[ProblemEntry, ...]
+    # left after fixing, the same as problems without --fix
+    remaining_problems: tuple[ProblemEntry, ...]
+    # True if at least one problem was repaired
+    fixed: bool
+
+    @classmethod
+    def from_result(cls, result: VerifyResult) -> Self:
+        return cls(
+            problems=tuple(map(ProblemEntry.from_problem, result.problems)),
+            remaining_problems=tuple(map(ProblemEntry.from_problem, result.remaining)),
+            fixed=result.fixed,
+        )
+
+
+@dataclass(frozen=True)
+class VerifyReport(CommandReport):
+    """Report of ``uvrev verify``"""
+
+    problems: tuple[ProblemEntry, ...]
+    remaining_problems: tuple[ProblemEntry, ...]
+    fixed: bool
+    error_message: str | None

@@ -13,7 +13,7 @@ from uvrev.cli import Services, cli
 from uvrev.commands import CommandNotFoundError, git, uv
 from uvrev.settings import installed_python_versions, load_settings
 from uvrev.types import UVRevProject
-from uvrev.verify import Problem
+from uvrev.verify import VerifyResult
 
 
 def error_report(result: Result) -> dict[str, Any]:
@@ -147,7 +147,7 @@ class TestMissingCommand:
 def test_unexpected_error_json(synced_project: UVRevProject) -> None:
     """A bug is reported as well, the traceback is still raised"""
 
-    def broken(project: UVRevProject, fix: bool) -> tuple[Problem, ...]:
+    def broken(project: UVRevProject, fix: bool) -> VerifyResult:
         raise RuntimeError("boom")
 
     services = Services(load_settings(), verify=broken)
