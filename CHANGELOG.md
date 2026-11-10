@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- `uvrev env create` failed for users without a git identity (`user.name` / `user.email`), e.g. service users,
+  and left a half-created folder behind. The repository of an environment is now configured with uvrev's own
+  identity (`uvrev <user@hostname>`) and without signing of commits and tags.
+  `uvrev env fix` applies it to existing environments. See the [README](README.md#git-identity).
+
 ## [0.4] (2026-11-10)
 
 ### Added
@@ -138,6 +147,7 @@ First real release.
 - `uvrev history` shows the revisions and `uvrev restore` goes back to a previous one.
 - `uvrev path` shows the location of an environment.
 
+[Unreleased]: https://gitlab.com/Kound/uvrev/-/compare/0.4...main
 [0.4]: https://gitlab.com/Kound/uvrev/-/compare/0.3...0.4
 [0.3]: https://gitlab.com/Kound/uvrev/-/compare/0.2...0.3
 [0.2]: https://gitlab.com/Kound/uvrev/-/compare/0.1.4...0.2

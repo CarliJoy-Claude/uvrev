@@ -329,6 +329,16 @@ Mark them with `uvrev env fix <name>` first.
 
 ---
 
+## Git Identity
+
+Each environment is a git repository, and uvrev commits the revisions itself.
+`uvrev env create` configures the repository with its own identity
+(`user.name = uvrev`, `user.email = <user>@<hostname>`) and disables signing of commits and tags.
+So it works for users without a git identity (e.g. service users), and never waits for a passphrase.
+`uvrev env fix` applies the same configuration to an existing environment.
+
+---
+
 ## Environment Selection
 
 `uvrev` determines the active environment based on the **currently activated virtual environment**.

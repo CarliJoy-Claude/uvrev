@@ -1,10 +1,12 @@
 import contextlib
+import getpass
 import platform
 import re
 import shutil
+import socket
 import subprocess
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from importlib.metadata import distributions, version as package_version
 from pathlib import Path
 
@@ -100,6 +102,7 @@ def create_env(
     update_python_lock(project)
 
     # Create initial revision
+    configure_git(project)
     git("add", ".", project=project)
     git("commit", "-m", constants.INITIAL_COMMIT_MSG, project=project)
     git(
@@ -113,6 +116,41 @@ def create_env(
 
     mark_created(project)
     return project
+
+
+def git_identity(
+    getuser: Callable[[], str] = getpass.getuser, hostname: str | None = None
+) -> str:
+    """Email of the user running uvrev, used for the commits of the revisions
+
+    >>> git_identity(lambda: "deploy", "server1")
+    'deploy@server1'
+    """
+    try:
+        user = getuser()
+    except (OSError, KeyError):
+        # no user name for the uid, e.g. in a container with an arbitrary uid
+        user = "uvrev"
+    return f"{user}@{hostname or socket.gethostname() or 'localhost'}"
+
+
+def configure_git(project: UVRevProject) -> None:
+    """Configure the git repository of the environment.
+
+    The revisions are committed by uvrev, so it always uses its own identity
+    (name ``uvrev``, email ``<user>@<hostname>``) instead of the one of the
+    user, which is usually missing for service users. Signing is disabled, as
+    it needs a key and can ask for a passphrase, which would hang uvrev.
+    """
+    config = (
+        ("user.name", "uvrev"),
+        ("user.email", git_identity()),
+        ("commit.gpgsign", "false"),
+        ("tag.gpgsign", "false"),
+        ("tag.forceSignAnnotated", "false"),
+    )
+    for key, value in config:
+        git("config", "--local", key, value, project=project)
 
 
 def mark_created(project: UVRevProject) -> None:

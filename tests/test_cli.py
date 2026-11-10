@@ -297,7 +297,9 @@ class TestEnvCreateIdempotent:
         assert "uvrev env fix old" in invoke("env", "list").output
 
         # .git/info/exclude is created if needed
-        assert invoke("env", "fix", "old").exit_code == 0
+        result = invoke("env", "fix", "old")
+        assert result.exit_code == 0
+        assert "is not a git repository" in result.output
         assert UVRevProject(target).created_successfully()
         exclude = target / ".git" / "info" / "exclude"
         assert exclude.read_text() == f"{constants.CREATED_MARKER_FILE}\n"

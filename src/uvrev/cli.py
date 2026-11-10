@@ -17,6 +17,7 @@ from .commands import uv
 from .operations import (
     PYTHON_MINOR_VERSION,
     add_packages,
+    configure_git,
     create_env,
     get_last_revision_number,
     list_installed_packages,
@@ -311,11 +312,21 @@ def env_fix(name: str | None) -> None:
 
     Use it for environments created by uvrev versions before 0.4, so they are
     not deleted by 'uvrev env create --force'.
+
+    It also configures the git repository of the environment like
+    'uvrev env create' does (identity of uvrev, no signing).
     """
     project_name = name or constants.DEFAULT_ENV
     project = UVRevProject(get_base_dir() / project_name)
     if not project.exists():
         fatal_error(f"Project '{project_name}' does not exist")
+    if (project.project_path / ".git" / "HEAD").is_file():
+        configure_git(project)
+    else:
+        warning(
+            f"{project.project_path} is not a git repository, "
+            "so revisions can not be created for this environment."
+        )
     mark_created(project)
     success(f"Marked project '{project_name}' as created successfully")
 
