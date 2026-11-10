@@ -21,10 +21,12 @@ from .differ import Diff, create_changelog
 from .exceptions import RevisionNotFoundError
 from .io import read_pyproject, write_pyproject
 from .parser import (
+    any_version,
     parse_pyproject_deps,
     parse_python_lock,
     parse_uv_environments,
     parse_uv_lock_packages,
+    same_except_any_version,
 )
 from .protection import unprotect, writable_venv
 from .report import RevisionChange
@@ -381,6 +383,17 @@ def create_revision(
     current = {path: path.read_text() if path.exists() else "" for path in paths}
     if old == current:
         return RevisionChange(last_rev, last_rev)
+    others = (project.python_version_path, project.python_lock_path)
+    if all(old[path] == current[path] for path in others) and same_except_any_version(
+        old[project.pyproject_path],
+        current[project.pyproject_path],
+        old[project.lock_path],
+        current[project.lock_path],
+    ):
+        # only "name" was rewritten to "name>=0" (or back), which is the same
+        # requirement: keep the committed files instead of an empty revision
+        git("checkout", "HEAD", "--", *committed, project=project)
+        return RevisionChange(last_rev, last_rev)
 
     deps = Diff(
         parse_pyproject_deps(old[project.pyproject_path]),
@@ -525,7 +538,8 @@ def add_packages(
 
     Args:
         project: Project to add packages to.
-        packages: Requirements to add.
+        packages: Requirements to add. A requirement without version
+            (``six``) replaces an existing constraint (``six==1.15``).
         upgrade_all: Add with ``uv add --upgrade`` (so a package needing newer
             versions of locked packages can be added) and run ``uv sync --upgrade``
             afterwards, so everything is upgraded.
@@ -542,7 +556,9 @@ def add_packages(
             "--raw",
             *(("--upgrade",) if upgrade_all else ()),
             *(("--python", python) if python else ()),
-            *packages,
+            # uv keeps an existing constraint for a bare name, so a requirement
+            # without version is given as "any version"
+            *(any_version(package) for package in packages),
             project=project,
         )
         message = f"Added: {', '.join(packages)}"

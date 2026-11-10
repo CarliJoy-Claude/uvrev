@@ -405,6 +405,28 @@ The environments are cached in `tools/` of the uvrev cache directory (`platformd
 
 ---
 
+## Adding Packages without a Version
+
+A package given without a version means **any version**, like in conda:
+
+```bash
+uvrev add 'six==1.15.0'   # pin six
+uvrev add six             # drop the pin again
+```
+
+uv keeps an existing constraint when a bare name is added, so uvrev passes such a requirement
+as `six>=0` to uv (`uv add --raw 'six>=0'`), and `pyproject.toml` contains `six>=0`.
+
+- Extras and markers are kept: `httpie[socks]` becomes `httpie[socks]>=0`.
+- Requirements with a version, URLs, paths and VCS requirements are passed to uv unchanged.
+- `six` and `six>=0` are the same requirement for uvrev: the changelog and the JSON report show both
+  as no constraint (`""` in `versions.dependencies`), and an environment that still contains `six`
+  gets no new revision by `uvrev add six`.
+- Dropping a constraint does not change the installed version: uv keeps the locked version until
+  an upgrade (`uvrev upgrade six` or `uvrev add --upgrade-all six`).
+
+---
+
 ## Examples
 
 ```bash

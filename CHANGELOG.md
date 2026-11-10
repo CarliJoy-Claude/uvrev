@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `uvrev remove --ignore-missing`: packages that are no dependencies are skipped instead of failing (names are
   compared normalized). If none is left, the command succeeds without a new revision.
 
+### Changed
+
+- `uvrev add NAME` (without version) now means "any version" and replaces an existing constraint:
+  after `uvrev add 'six==1.15.0'`, `uvrev add six` drops the pin (it changed nothing before).
+  The requirement is passed to uv as `six>=0`, which uvrev treats and shows like no constraint.
+  The locked version is kept until an upgrade. See the [README](README.md#adding-packages-without-a-version).
+
 ### Fixed
 
 - The environment variable `UVREV_ENV` was documented in the help of `--env`, but not used.
