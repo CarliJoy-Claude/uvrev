@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `protect` / `unprotect`: `changed`, `protected` and `path`.
   - `verify`: `problems`, `remaining_problems` and `fixed`.
   - `schema_version` stays 2: fields are only added. It changes only if existing fields change.
+- JSON report of `add`, `remove`, `sync`, `upgrade`, `upgrade-python` and `restore`: new field `verify` with the
+  result of `--verify` (`problems`, `remaining_problems`, `fixed`), `null` if it did not run.
+  If the venv can not be fixed, the report still contains the change that was made (with `"status": "error"`).
 - `uvrev env create --python` for an existing environment warns if the environment uses another Python version
   (the option is still not applied).
 - `uvrev remove --ignore-missing`: packages that are no dependencies are skipped instead of failing (names are

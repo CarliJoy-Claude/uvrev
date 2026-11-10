@@ -216,9 +216,34 @@ class TestVerifyAfterChange:
 
         assert result.exit_code == 0
         # stdout only contains the report
-        assert json.loads(result.stdout)["status"] == "success"
+        report = json.loads(result.stdout)
+        assert report["status"] == "success"
         assert "--reinstall-package=sampleproject" in result.stderr
         assert "changed" not in module(synced_project).read_text()
+        # the report shows what verify found and repaired
+        assert report["verify"] == {
+            "problems": [
+                {
+                    "kind": "modified",
+                    "path": str(module(synced_project)),
+                    "package": "sampleproject",
+                    "is_warning": False,
+                }
+            ],
+            "remaining_problems": [],
+            "fixed": True,
+        }
+
+    def test_nothing_to_fix(
+        self, invoke: Invoker, synced_project: UVRevProject
+    ) -> None:
+        report = json.loads(invoke("sync", "--verify", "--json").stdout)
+
+        assert report["verify"] == {
+            "problems": [],
+            "remaining_problems": [],
+            "fixed": False,
+        }
 
     def test_setting(
         self,
@@ -246,16 +271,26 @@ class TestVerifyAfterChange:
         unprotect(synced_project)
         module(synced_project).unlink()
 
-        result = invoke("sync", "--no-verify")
+        result = invoke("sync", "--no-verify", "--json")
 
         assert result.exit_code == 0
         assert not module(synced_project).exists()
+        # null: verify did not run
+        assert json.loads(result.stdout)["verify"] is None
 
     def test_fails(self, synced_project: UVRevProject) -> None:
-        """Problems that remain fail the command, with a JSON error report"""
-        result = invoke_unfixable("sync", "--verify", "--json")
+        """Problems that remain fail the command, the report still shows the change"""
+        result = invoke_unfixable("add", "peppercorn", "--verify", "--json")
 
         assert result.exit_code == 1
+        assert "1 problem(s) could not be fixed" in result.stderr
         report = json.loads(result.stdout)
         assert report["status"] == "error"
         assert report["error_message"] == "1 problem(s) could not be fixed"
+        # the revision was created before verifying
+        assert (report["previous_revision"], report["revision"]) == (1, 2)
+        assert report["all_changed_dependencies"] == ["peppercorn"]
+        assert report["verify"]["fixed"] is False
+        assert [p["path"] for p in report["verify"]["remaining_problems"]] == [
+            "broken.py"
+        ]

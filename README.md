@@ -199,6 +199,7 @@ uvrev add pandas numpy --json
   },
   "python": null,
   "environments": null,
+  "verify": null,
   "error_message": null
 }
 ```
@@ -220,6 +221,7 @@ uvrev add pandas numpy --json
 | `versions.dependencies` | `object` | For every changed dependency the `old` and `new` specifier. `""` means no version constraint, `null` means absent. |
 | `python` | `object \| null` | `old` and `new` exact version of the Python interpreter, if it changed. `null` if it did not change. |
 | `environments` | `object \| null` | `old` and `new` markers of `tool.uv.environments` (arrays of strings), if they changed. `null` if they did not change. See [Supported Environments](#supported-environments). |
+| `verify` | `object \| null` | The result of verifying the venv after the change (`--verify` or the setting `verify_after_change`): `problems`, `remaining_problems` and `fixed` like in the [report of `uvrev verify`](#reports-of-other-commands). `null` if it did not run. If problems remain, `status` is `"error"`, but the other fields still describe the change that was made. |
 | `error_message` | `string \| null` | The error, if `status` is `"error"`. |
 
 All package names are [normalized](https://packaging.python.org/en/latest/specifications/name-normalization/) and sorted.

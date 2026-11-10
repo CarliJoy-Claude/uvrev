@@ -366,55 +366,44 @@ def echo_problems(problems: tuple[Problem, ...], err: bool = False) -> None:
         )
 
 
-def fix_venv(project: UVRevProject, err: bool = False) -> VerifyResult:
-    """Verify and fix the venv.
-
-    Raises:
-        click.ClickException: If problems remain that could not be fixed.
-    """
-    result = get_services(click.get_current_context()).verify(project, True)
-    echo_problems(result.remaining, err=err)
-    if result.errors:
-        raise click.ClickException(
-            f"{len(result.errors)} problem(s) could not be fixed"
-        )
-    return result
-
-
-def verified(
+def run_operation(
     project: UVRevProject,
+    as_json: bool,
     verify_after: bool | None,
     operation: Callable[[], RevisionChange],
-) -> Callable[[], RevisionChange]:
-    """Extend an operation by verifying and fixing the venv afterwards (if enabled)"""
-    if verify_after is None:
-        verify_after = project.settings.verify_after_change
-    if not verify_after:
-        return operation
-
-    def operation_and_fix() -> RevisionChange:
-        change = operation()
-        # stdout may contain the JSON report
-        fix_venv(project, err=True)
-        return change
-
-    return operation_and_fix
-
-
-def run_operation(
-    as_json: bool, operation: Callable[[], RevisionChange]
 ) -> RevisionChange:
-    """Run an operation and print its JSON report if requested.
+    """Run an operation that changes an environment.
 
-    Failures are reported by ReportingCommand.
+    Afterwards the venv is verified and fixed, if requested (``--verify`` or the
+    setting ``verify_after_change``), and the JSON report is printed with --json.
+    Failures of the operation are reported by ReportingCommand.
+
+    If the venv can not be fixed, the report contains the change (which is
+    done) with status "error" and the program exits with exit code 1.
     """
     change = operation()
+    ctx = click.get_current_context()
+    if verify_after is None:
+        verify_after = project.settings.verify_after_change
+    result = get_services(ctx).verify(project, True) if verify_after else None
+    message = None
+    if result is not None:
+        # stdout may contain the JSON report
+        echo_problems(result.remaining, err=True)
+        if result.errors:
+            message = f"{len(result.errors)} problem(s) could not be fixed"
     if as_json:
-        ctx = click.get_current_context()
         report = Report.from_change(
-            report_command(ctx), report_arguments(ctx), change, report_options(ctx)
+            report_command(ctx),
+            report_arguments(ctx),
+            change,
+            report_options(ctx),
+            result,
+            message,
         )
         click.echo(report.to_json())
+    if message:
+        fatal_error(message)
     return change
 
 
@@ -601,12 +590,10 @@ def add(
         uvrev add --python 3.14 pandas    # Add pandas and switch to Python 3.14
     """
     change = run_operation(
+        project,
         as_json,
-        verified(
-            project,
-            verify_after,
-            lambda: add_packages(project, packages, upgrade_all, python),
-        ),
+        verify_after,
+        lambda: add_packages(project, packages, upgrade_all, python),
     )
     if change.created:
         success(f"Created revision {change.revision}")
@@ -638,12 +625,10 @@ def remove(
         uvrev remove --ignore-missing pandas numpy   # fine if they are not installed
     """
     change = run_operation(
+        project,
         as_json,
-        verified(
-            project,
-            verify_after,
-            lambda: remove_packages(project, packages, ignore_missing),
-        ),
+        verify_after,
+        lambda: remove_packages(project, packages, ignore_missing),
     )
     if change.created:
         success(f"Removed {' '.join(packages)}.  Created revision {change.revision}.")
@@ -660,9 +645,7 @@ def sync(project: UVRevProject, as_json: bool, verify_after: bool | None) -> Non
 
     With --json the changes of the installed packages are reported.
     """
-    run_operation(
-        as_json, verified(project, verify_after, lambda: sync_packages(project))
-    )
+    run_operation(project, as_json, verify_after, lambda: sync_packages(project))
     success("Sync complete.")
 
 
@@ -684,8 +667,7 @@ def upgrade(
         uvrev upgrade pandas    # Upgrade only pandas
     """
     change = run_operation(
-        as_json,
-        verified(project, verify_after, lambda: upgrade_packages(project, packages)),
+        project, as_json, verify_after, lambda: upgrade_packages(project, packages)
     )
     if not change.created:
         success("Everything is already up to date.")
@@ -725,8 +707,7 @@ def upgrade_python_cmd(
         uvrev upgrade-python 3.14
     """
     change = run_operation(
-        as_json,
-        verified(project, verify_after, lambda: upgrade_python(project, version)),
+        project, as_json, verify_after, lambda: upgrade_python(project, version)
     )
     if not change.created:
         success(f"Python {version} is already used.")
@@ -766,8 +747,7 @@ def restore(
 ) -> None:
     """Restore project to a specific revision"""
     run_operation(
-        as_json,
-        verified(project, verify_after, lambda: restore_revision(project, revision)),
+        project, as_json, verify_after, lambda: restore_revision(project, revision)
     )
     success(f"Restored to revision {revision}")
 

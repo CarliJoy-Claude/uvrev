@@ -64,6 +64,54 @@ class EnvironmentsChange:
 
 
 @dataclass(frozen=True)
+class ProblemEntry:
+    """A problem found by ``uvrev verify``"""
+
+    kind: str
+    path: str
+    package: str | None
+    is_warning: bool
+
+    @classmethod
+    def from_problem(cls, problem: Problem) -> Self:
+        return cls(
+            kind=problem.kind,
+            path=str(problem.path),
+            package=problem.package,
+            is_warning=problem.is_warning,
+        )
+
+
+@dataclass(frozen=True)
+class VerifySummary:
+    """Result of verifying a venv, as shown in the reports
+
+    >>> from pathlib import Path
+    >>> problem = Problem("modified", Path("a.py"), canonicalize_name("pkg"))
+    >>> summary = VerifySummary.from_result(VerifyResult((problem,), (), fixed=True))
+    >>> summary.problems
+    (ProblemEntry(kind='modified', path='a.py', package='pkg', is_warning=False),)
+    >>> summary.remaining_problems, summary.fixed
+    ((), True)
+    """
+
+    # found before fixing
+    problems: tuple[ProblemEntry, ...]
+    # left after fixing, the same as problems without --fix
+    remaining_problems: tuple[ProblemEntry, ...]
+    # True if at least one problem was repaired
+    fixed: bool
+
+    @classmethod
+    def from_result(cls, result: VerifyResult) -> Self:
+        return cls(
+            problems=tuple(map(ProblemEntry.from_problem, result.problems)),
+            remaining_problems=tuple(map(ProblemEntry.from_problem, result.remaining)),
+            fixed=result.fixed,
+        )
+
+
+@dataclass(frozen=True)
 class Report:
     """JSON report of a command, the field order is the order in the JSON"""
 
@@ -81,6 +129,8 @@ class Report:
     versions: Versions
     python: VersionChange | None
     environments: EnvironmentsChange | None
+    # result of verifying the venv after the change, None if it did not run
+    verify: VerifySummary | None
     error_message: str | None
 
     @classmethod
@@ -90,14 +140,19 @@ class Report:
         arguments: tuple[str, ...],
         change: RevisionChange,
         options: Mapping[str, Option] | None = None,
+        verify: VerifyResult | None = None,
+        error_message: str | None = None,
     ) -> Self:
-        """Build the report of a successful command.
+        """Build the report of a command that changed the environment.
 
         Args:
             command: Executed subcommand.
             arguments: Arguments given to the subcommand.
             change: Outcome of the command.
             options: Options given to the subcommand, e.g. ``{"upgrade_all": True}``.
+            verify: Result of verifying (and fixing) the venv afterwards.
+            error_message: Error that occurred after the change (e.g. the venv
+                could not be fixed), marks the report as failed.
 
         Examples:
             >>> change = RevisionChange(
@@ -119,10 +174,17 @@ class Report:
             {}
             >>> Report.from_change("add", ("numpy",), change, {"upgrade_all": True}).options
             {'upgrade_all': True}
+            >>> report.verify is None
+            True
+            >>> failed = Report.from_change(
+            ...     "add", ("numpy",), change, verify=VerifyResult(), error_message="boom"
+            ... )
+            >>> failed.status, failed.revision, failed.verify.fixed
+            ('error', 2, False)
         """
         return cls(
             schema_version=SCHEMA_VERSION,
-            status="success",
+            status="error" if error_message else "success",
             command=command,
             arguments=arguments,
             options=dict(options or {}),
@@ -138,7 +200,8 @@ class Report:
             ),
             python=change.python.versions().get(canonicalize_name("python")),
             environments=EnvironmentsChange.from_diff(change.environments),
-            error_message=None,
+            verify=VerifySummary.from_result(verify) if verify else None,
+            error_message=error_message,
         )
 
     @classmethod
@@ -184,6 +247,7 @@ class Report:
             versions=Versions(packages={}, dependencies={}),
             python=None,
             environments=None,
+            verify=None,
             error_message=error_message,
         )
 
@@ -219,6 +283,7 @@ class Report:
           },
           "python": null,
           "environments": null,
+          "verify": null,
           "error_message": "boom"
         }
         """
@@ -272,54 +337,6 @@ class ProtectReport(CommandReport):
     # path of the venv
     path: str
     error_message: str | None
-
-
-@dataclass(frozen=True)
-class ProblemEntry:
-    """A problem found by ``uvrev verify``"""
-
-    kind: str
-    path: str
-    package: str | None
-    is_warning: bool
-
-    @classmethod
-    def from_problem(cls, problem: Problem) -> Self:
-        return cls(
-            kind=problem.kind,
-            path=str(problem.path),
-            package=problem.package,
-            is_warning=problem.is_warning,
-        )
-
-
-@dataclass(frozen=True)
-class VerifySummary:
-    """Result of verifying a venv, as shown in the reports
-
-    >>> from pathlib import Path
-    >>> problem = Problem("modified", Path("a.py"), canonicalize_name("pkg"))
-    >>> summary = VerifySummary.from_result(VerifyResult((problem,), (), fixed=True))
-    >>> summary.problems
-    (ProblemEntry(kind='modified', path='a.py', package='pkg', is_warning=False),)
-    >>> summary.remaining_problems, summary.fixed
-    ((), True)
-    """
-
-    # found before fixing
-    problems: tuple[ProblemEntry, ...]
-    # left after fixing, the same as problems without --fix
-    remaining_problems: tuple[ProblemEntry, ...]
-    # True if at least one problem was repaired
-    fixed: bool
-
-    @classmethod
-    def from_result(cls, result: VerifyResult) -> Self:
-        return cls(
-            problems=tuple(map(ProblemEntry.from_problem, result.problems)),
-            remaining_problems=tuple(map(ProblemEntry.from_problem, result.remaining)),
-            fixed=result.fixed,
-        )
 
 
 @dataclass(frozen=True)
