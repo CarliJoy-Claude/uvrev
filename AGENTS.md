@@ -139,6 +139,11 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
 - The repository of an environment has its own git identity (`uvrev`,
   `<user>@<hostname>`) and no signing (`configure_git()`), so uvrev works for
   service users and never waits for a passphrase.
+- Python: `.python-version` holds a *request* (everything `uv python pin`
+  accepts: version, range, implementation, path), never parse it as a version.
+  Compare interpreters with `get_python_version()`. `add --python`,
+  `upgrade --python` and `upgrade-python` share the pin step in `apply_change()`
+  (pin first, then the command's uv call).
 - `uv add` keeps the locked versions of other packages; with `--upgrade-all`
   use `uv add --upgrade`, then `uv sync --upgrade`.
 

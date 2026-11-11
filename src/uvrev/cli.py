@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -16,15 +15,16 @@ from uvrev.exceptions import RevisionNotFoundError, ToolError
 from . import constants, settings as uvrev_settings
 from .commands import uv
 from .operations import (
-    PYTHON_MINOR_VERSION,
     add_packages,
     changelog_of,
     configure_git,
     create_env,
     get_last_revision_number,
+    get_python_version,
     list_installed_packages,
     list_projects,
     mark_created,
+    python_request,
     remove_packages,
     restore_revision,
     show_history,
@@ -443,34 +443,19 @@ def env() -> None:
     """Manage environments"""
 
 
-def pinned_python(project: UVRevProject) -> str | None:
-    """The Python version pinned for the environment, None if unknown"""
-    if not project.python_version_path.is_file():
-        return None
-    return project.python_version_path.read_text().strip() or None
-
-
-def python_minor(version: str | None) -> str | None:
-    """The major.minor part of a Python version request, None if it has none
-
-    >>> python_minor("3.12"), python_minor("3.12.4"), python_minor("pypy")
-    ('3.12', '3.12', None)
-    """
-    match = re.match(r"\d+\.\d+", version or "")
-    return match.group() if match else None
-
-
 def env_create_report(
     ctx: click.Context, created: bool, error_message: str | None = None
 ) -> EnvCreateReport:
     project = UVRevProject(
         get_base_dir() / (ctx.params.get("name") or constants.DEFAULT_ENV)
     )
+    version = get_python_version(project)
     return EnvCreateReport(
         **report_header(ctx, error_message),
         created=created,
         path=str(project.project_path),
-        python=pinned_python(project),
+        python=str(version) if version else None,
+        python_request=python_request(project),
         error_message=error_message,
     )
 
@@ -506,7 +491,8 @@ def env_create(
 
     Running it again for an environment that was created successfully does
     nothing. In this case --python is NOT applied: a warning is shown if the
-    environment uses another version, and --json reports the pinned version.
+    environment has another Python pinned, and --json reports the pinned request
+    (python_request) and the version of its interpreter (python).
 
     An environment is created successfully, if it contains the file
     .uvrev_created_successfully, written as the last step.
@@ -524,12 +510,12 @@ def env_create(
         success(f"Project '{project_name}' created at {project.project_path}")
     else:
         success(f"Project '{project_name}' already exists at {project.project_path}")
-        pinned = pinned_python(project)
-        wanted = python_minor(python)
-        if wanted and pinned and wanted != python_minor(pinned):
+        pinned = python_request(project)
+        if python and python != pinned:
             warning(
-                f"Project '{project_name}' uses Python {pinned}, --python {python} "
-                f"is ignored. Change it with 'uvrev upgrade-python {wanted}'."
+                f"Project '{project_name}' has Python {pinned} pinned, "
+                f"--python {python} is ignored. "
+                f"Change it with 'uvrev upgrade-python {python}'."
             )
     if as_json:
         click.echo(env_create_report(ctx, created).to_json())
@@ -592,7 +578,8 @@ def env_list() -> None:
 @click.option(
     "--python",
     default=None,
-    help="Python version for 'uv add --python', pinned with 'uv python pin'",
+    help="Python request for 'uv python pin' (e.g. 3.14, '>=3.13,<3.15', "
+    "cpython-3.14), pinned before the packages are added",
 )
 @dry_run_option
 @env_option
@@ -684,8 +671,14 @@ def sync(project: UVRevProject, as_json: bool, verify_after: bool | None) -> Non
     success("Sync complete.")
 
 
-@cli.command(error_report=change_error_report, report_options=("dry_run",))
+@cli.command(error_report=change_error_report, report_options=("python", "dry_run"))
 @click.argument("packages", nargs=-1)
+@click.option(
+    "--python",
+    default=None,
+    help="Python request for 'uv python pin' (e.g. 3.14, '>=3.13,<3.15', "
+    "cpython-3.14), pinned before the packages are upgraded",
+)
 @dry_run_option
 @env_option
 @json_option
@@ -693,6 +686,7 @@ def sync(project: UVRevProject, as_json: bool, verify_after: bool | None) -> Non
 def upgrade(
     project: UVRevProject,
     packages: tuple[str, ...],
+    python: str | None,
     dry_run: bool,
     as_json: bool,
     verify_after: bool | None,
@@ -702,12 +696,13 @@ def upgrade(
     Examples:
         uvrev upgrade           # Upgrade all packages
         uvrev upgrade pandas    # Upgrade only pandas
+        uvrev upgrade --python 3.14    # Upgrade all packages and switch to Python 3.14
     """
     change = run_operation(
         project,
         as_json,
         verify_after,
-        lambda: upgrade_packages(project, packages, dry_run),
+        lambda: upgrade_packages(project, packages, dry_run, python),
         dry_run,
     )
     if dry_run:
@@ -722,36 +717,31 @@ def upgrade(
         success(f"Upgraded all packages, created revision {change.revision}")
 
 
-def python_version_callback(
-    _ctx: click.Context | None, _param: click.Parameter | None, value: str
-) -> str:
-    if not PYTHON_MINOR_VERSION.match(value):
-        raise click.BadParameter(
-            f"must be given as major.minor (e.g. 3.14), not {value!r}"
-        )
-    return value
-
-
 @cli.command(
     "upgrade-python", error_report=change_error_report, report_options=("dry_run",)
 )
-@click.argument("version", callback=python_version_callback)
+@click.argument("request", metavar="REQUEST")
 @dry_run_option
 @env_option
 @json_option
 @verify_option
 def upgrade_python_cmd(
     project: UVRevProject,
-    version: str,
+    request: str,
     dry_run: bool,
     as_json: bool,
     verify_after: bool | None,
 ) -> None:
-    """Change the Python minor version of the environment
+    """Change the Python of the environment without upgrading packages
 
-    Pins VERSION with 'uv python pin', recreates the virtual environment and
-    updates the locked packages. requires-python is not changed, so downgrades
-    work as well, as long as VERSION matches requires-python.
+    Pins REQUEST with 'uv python pin', recreates the virtual environment and
+    updates the locked packages if needed. REQUEST is everything uv accepts:
+    a version (3.14, 3.14.1), a range ('>=3.13,<3.15'), an implementation
+    (cpython-3.14, pypy@3.11) or the path of an interpreter.
+    requires-python is not changed, so downgrades work as well, as long as
+    REQUEST matches requires-python.
+
+    To also upgrade the packages, use 'uvrev upgrade --python REQUEST'.
 
     Examples:
         uvrev upgrade-python 3.14
@@ -760,15 +750,15 @@ def upgrade_python_cmd(
         project,
         as_json,
         verify_after,
-        lambda: upgrade_python(project, version, dry_run),
+        lambda: upgrade_python(project, request, dry_run),
         dry_run,
     )
     if dry_run:
         return
     if not change.created:
-        success(f"Python {version} is already used.")
+        success(f"Python {request} is already used.")
     else:
-        success(f"Changed Python to {version}, created revision {change.revision}")
+        success(f"Changed Python to {request}, created revision {change.revision}")
 
 
 @cli.command("list")

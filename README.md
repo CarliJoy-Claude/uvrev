@@ -65,11 +65,11 @@ uvrev --help
 | `uvrev env create` | Create a new UV project with revision tracking (does nothing if it exists) |
 | `uvrev env list`   | List all UV projects |
 | `uvrev env fix`    | Mark an environment as created successfully (see [Creating Environments](#creating-environments)) |
-| `uvrev add`        | Add packages to the current project (`--upgrade-all` also upgrades all others, `--python` changes the Python version) |
+| `uvrev add`        | Add packages to the current project (`--upgrade-all` also upgrades all others, `--python` changes the Python) |
 | `uvrev remove`     | Remove packages from the current project (`--ignore-missing` skips packages that are no dependencies) |
 | `uvrev sync`       | Sync project dependencies |
-| `uvrev upgrade`    | Upgrade all or the given packages |
-| `uvrev upgrade-python` | Change the Python minor version (e.g. `3.12` to `3.14`) |
+| `uvrev upgrade`    | Upgrade all or the given packages (`--python` changes the Python) |
+| `uvrev upgrade-python` | Change the Python (e.g. `3.12` to `3.14`) without upgrading packages |
 | `uvrev list`       | List installed packages in the current environment |
 | `uvrev history`    | Show revision history with package changes |
 | `uvrev restore`    | Restore project to a specific revision |
@@ -198,6 +198,7 @@ uvrev add pandas numpy --json
     }
   },
   "python": null,
+  "python_request": null,
   "environments": null,
   "verify": null,
   "error_message": null
@@ -220,6 +221,7 @@ uvrev add pandas numpy --json
 | `versions.packages` | `object` | For every changed package the `old` and `new` version. `null` means absent (added or removed). |
 | `versions.dependencies` | `object` | For every changed dependency the `old` and `new` specifier. `""` means no version constraint, `null` means absent. |
 | `python` | `object \| null` | `old` and `new` exact version of the Python interpreter, if it changed. `null` if it did not change. |
+| `python_request` | `object \| null` | `old` and `new` pinned Python request (the content of `.python-version`, e.g. `3.14` or `>=3.13, <3.15`), if it changed. `null` if it did not change. See [Python Version](#python-version). |
 | `environments` | `object \| null` | `old` and `new` markers of `tool.uv.environments` (arrays of strings), if they changed. `null` if they did not change. See [Supported Environments](#supported-environments). |
 | `verify` | `object \| null` | The result of verifying the venv after the change (`--verify` or the setting `verify_after_change`): `problems`, `remaining_problems` and `fixed` like in the [report of `uvrev verify`](#reports-of-other-commands). `null` if it did not run. If problems remain, `status` is `"error"`, but the other fields still describe the change that was made. |
 | `error_message` | `string \| null` | The error, if `status` is `"error"`. |
@@ -257,7 +259,8 @@ So a dry run needs the package index like the real command, but no disk space fo
 |-------|------|-------------|
 | `created` | `boolean` | `false` if the environment existed already (nothing was done). |
 | `path` | `string` | Path of the project of the environment. |
-| `python` | `string \| null` | The pinned Python version (`major.minor`) of the environment, also if it existed already. `null` if unknown. |
+| `python` | `string \| null` | The exact version of the Python interpreter of the environment (e.g. `3.14.1`), also if it existed already. `null` if unknown. |
+| `python_request` | `string \| null` | The pinned Python request of the environment (the content of `.python-version`, e.g. `3.14`). `null` if unknown. |
 
 `uvrev protect --json` and `uvrev unprotect --json`:
 
@@ -344,25 +347,32 @@ Constraints in `pyproject.toml` (`Dependencies`) can not be compared, so they ar
 
 ## Python Version
 
-The Python minor version of an environment is pinned in `.python-version` (e.g. `3.12`).
+The Python of an environment is pinned in `.python-version` as a *Python request* (e.g. `3.12`).
 The exact version of the interpreter (e.g. `3.12.3`) is recorded in `.python-version.lock`.
 The interpreter can change without uvrev, e.g. by a patch update of a uv managed Python.
 Such a change is recorded with the next revision.
 
-Use `uvrev upgrade-python` to change the minor version:
+Three commands change the pinned request, all in the same way:
 
 ```bash
-uvrev upgrade-python 3.14
+uvrev upgrade-python 3.14         # only change Python, the packages keep their versions
+uvrev upgrade --python 3.14       # change Python and upgrade all (or the given) packages
+uvrev add --python 3.14 polars    # change Python and add packages
 ```
 
-It pins the version with `uv python pin`, recreates the virtual environment and updates `uv.lock`.
-`requires-python` is not changed, `uv python pin` refuses versions that don't match it.
-Going back to an older version works the same way, `uvrev restore` restores the pinned version as well.
+They first pin the request with `uv python pin`, then run their uv command (`uv sync`, `uv sync --upgrade`,
+`uv add`), which recreates the virtual environment if needed. Everything is one revision.
 
-`uvrev add --python 3.14 <pkg>...` adds packages and changes the Python version in one revision.
-It runs `uv add --raw --python 3.14 <pkg>...` and then `uv python pin 3.14`.
+- The request is everything `uv python pin` accepts: a version (`3.14`, `3.14.1`), a range (`'>=3.13,<3.15'`),
+  an implementation (`cpython-3.14`, `pypy@3.11`) or the path of an interpreter.
+- `requires-python` is not changed, uv refuses requests that don't match it. So going back to an older
+  version works the same way. `uvrev restore` restores the pinned request as well.
+- The revision tells what happened, e.g. `Upgraded Python: 3.13.9 → 3.14.1 (pinned 3.14)` (or `Downgraded`),
+  compared by the versions of the interpreter. If only the request changed it is `Pinned Python cpython-3.14`,
+  and nothing is mentioned if neither changed.
+- The JSON report has the interpreter versions in `python` and the requests in `python_request`.
 
-`uvrev env create` pins the version given with `--python`.
+`uvrev env create` pins the request given with `--python`.
 Without it, uv chooses its default interpreter and pins its minor version.
 `UV_PYTHON` is ignored, so an environment always uses the version of its `.python-version`.
 
@@ -402,9 +412,10 @@ The lock file is only valid on the platform it was created on.
 The file is ignored by git (`.git/info/exclude`).
 
 - If the environment was created successfully before, `uvrev env create` does nothing.
-  `--python` is **not** applied to the existing environment: uvrev warns if the environment uses another
-  version, and `--json` reports the pinned version as `python` (and `"created": false`).
-  Change the version with `uvrev upgrade-python`.
+  `--python` is **not** applied to the existing environment: uvrev warns if another request is pinned
+  (the texts are compared), and `--json` reports the pinned request as `python_request`, the version of
+  its interpreter as `python` and `"created": false`.
+  Change it with `uvrev upgrade-python`.
 - If the folder exists without the file (e.g. an aborted `uvrev env create`), it fails.
   `uvrev env create --force` deletes the folder and creates the environment again.
 - Commands using an environment without the file warn about it.
@@ -529,6 +540,9 @@ uvrev add --upgrade-all pandas numpy
 
 # add polars and change to Python 3.14
 uvrev add --python 3.14 polars
+
+# upgrade everything and change to Python 3.15
+uvrev upgrade --python 3.15
 
 uvrev list
 uvrev history

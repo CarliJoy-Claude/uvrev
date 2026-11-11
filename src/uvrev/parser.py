@@ -223,6 +223,25 @@ def parse_python_lock(content: str) -> Mapping[NormalizedName, Version]:
     return {canonicalize_name("python"): Version(version)}
 
 
+def parse_python_request(content: str) -> Mapping[NormalizedName, str]:
+    """Parse the pinned Python request (``.python-version``).
+
+    Returns:
+        Mapping of ``python`` to the request, empty if nothing is pinned.
+
+    Examples:
+        >>> parse_python_request("3.14\\n")
+        {'python': '3.14'}
+        >>> parse_python_request(">=3.13, <3.15\\n")
+        {'python': '>=3.13, <3.15'}
+        >>> parse_python_request("")
+        {}
+    """
+    if not (request := content.strip()):
+        return {}
+    return {canonicalize_name("python"): request}
+
+
 def parse_uv_environments(toml_content: str) -> Mapping[NormalizedName, None]:
     """Parse ``tool.uv.environments`` from pyproject.toml content.
 

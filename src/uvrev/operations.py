@@ -1,7 +1,6 @@
 import contextlib
 import getpass
 import platform
-import re
 import shutil
 import socket
 import subprocess
@@ -26,6 +25,7 @@ from .parser import (
     any_version,
     parse_pyproject_deps,
     parse_python_lock,
+    parse_python_request,
     parse_uv_environments,
     parse_uv_lock_packages,
     same_except_any_version,
@@ -430,6 +430,10 @@ def state_change(
             parse_uv_environments(old[PYPROJECT_FILE]),
             parse_uv_environments(new[PYPROJECT_FILE]),
         ),
+        python_request=Diff(
+            parse_python_request(old[constants.PYTHON_VERSION_FILE]),
+            parse_python_request(new[constants.PYTHON_VERSION_FILE]),
+        ),
     )
 
 
@@ -660,8 +664,8 @@ def add_packages(
         upgrade_all: Add with ``uv add --upgrade`` (so a package needing newer
             versions of locked packages can be added) and run ``uv sync --upgrade``
             afterwards, so everything is upgraded.
-        python: Python version for ``uv add --python``, pinned afterwards
-            with ``uv python pin``.
+        python: Python request, pinned before the packages are added
+            (see ``apply_change``).
         dry_run: Only report what would change.
 
     Returns:
@@ -669,36 +673,90 @@ def add_packages(
     """
 
     def add(target: UVRevProject, sync: bool) -> str:
-        update_environments(target)
         uv(
             "add",
             "--raw",
             *(() if sync else ("--no-sync",)),
             *(("--upgrade",) if upgrade_all else ()),
-            *(("--python", python) if python else ()),
             # uv keeps an existing constraint for a bare name, so a requirement
             # without version is given as "any version"
             *(any_version(package) for package in packages),
             project=target,
         )
         message = f"Added: {', '.join(packages)}"
-        if python:
-            uv("python", "pin", python, project=target)
-            message += f"; pinned Python {python}"
         if upgrade_all:
             sync_or_lock(target, sync, "--upgrade")
             message += "; upgraded all packages"
         return message
 
-    return apply_change(project, add, dry_run)
+    return apply_change(project, add, dry_run, python)
+
+
+def python_request(project: UVRevProject) -> str | None:
+    """The Python request pinned for the environment (``.python-version``).
+
+    It is what was given to ``uv python pin``: a version, but also a range,
+    an implementation or a path. None if nothing is pinned.
+    """
+    if not project.python_version_path.is_file():
+        return None
+    return project.python_version_path.read_text().strip() or None
+
+
+def python_message(
+    request: str | None,
+    old: tuple[str | None, Version | None],
+    new: tuple[str | None, Version | None],
+) -> str:
+    """Part of the revision message about a pinned Python request.
+
+    Args:
+        request: The Python request given by the user, None if none was given.
+        old: Pinned request and exact interpreter version before the change.
+        new: The same after the change.
+
+    Returns:
+        Empty if neither the pinned request nor the interpreter changed.
+
+    Examples:
+        >>> old = ("3.13", Version("3.13.9"))
+        >>> python_message("3.14", old, ("3.14", Version("3.14.1")))
+        'Upgraded Python: 3.13.9 → 3.14.1 (pinned 3.14)'
+        >>> python_message("3.12", old, ("3.12", Version("3.12.3")))
+        'Downgraded Python: 3.13.9 → 3.12.3 (pinned 3.12)'
+        >>> python_message("cpython-3.13", old, ("cpython-3.13", Version("3.13.9")))
+        'Pinned Python cpython-3.13'
+        >>> python_message("3.13", (None, None), ("3.13", Version("3.13.9")))
+        'Pinned Python 3.13'
+        >>> python_message("3.13", old, old)
+        ''
+        >>> python_message(None, old, ("3.13", Version("3.13.10")))
+        ''
+    """
+    if request is None or old == new:
+        return ""
+    old_version, new_version = old[1], new[1]
+    if old_version is None or new_version is None or old_version == new_version:
+        return f"Pinned Python {request}"
+    action = "Upgraded" if new_version > old_version else "Downgraded"
+    return f"{action} Python: {old_version} → {new_version} (pinned {request})"
 
 
 def apply_change(
     project: UVRevProject,
     change: Callable[[UVRevProject, bool], str],
     dry_run: bool,
+    python: str | None = None,
 ) -> RevisionChange:
     """Apply a change to the environment and create a revision.
+
+    All changes run the same steps, so they behave the same:
+
+    1. ``tool.uv.environments`` is updated, otherwise uv might fail to resolve.
+    2. The Python request is pinned with ``uv python pin`` (if given), which
+       accepts versions, ranges, implementations and paths and checks them
+       against ``requires-python``. uv uses the pin for the following commands.
+    3. The uv commands of the change run.
 
     Args:
         project: Project to change.
@@ -706,16 +764,29 @@ def apply_change(
             message of the revision. Its second argument tells whether the
             venv is synced, otherwise only the files may be changed.
         dry_run: Apply the change to a scratch copy and only report it.
+        python: Python request to pin before the change.
 
     Returns:
         Changes compared to the previous revision.
     """
+
+    def run(target: UVRevProject, sync: bool) -> str:
+        update_environments(target)
+        if python:
+            uv("python", "pin", python, project=target)
+        return change(target, sync)
+
     if dry_run:
         with scratch_copy(project) as scratch:
-            change(scratch, False)
+            run(scratch, False)
             return preview_change(project, scratch)
+    before = (python_request(project), get_python_version(project))
     with reset_on_failure(project), writable_venv(project):
-        message = change(project, True)
+        message = run(project, True)
+    after = (python_request(project), get_python_version(project))
+    parts = (message, python_message(python, before, after))
+    # a change that only pins Python has no message of its own
+    message = "; ".join(filter(None, parts)) or f"Pinned Python {python}"
     return create_revision(project, message)
 
 
@@ -762,7 +833,6 @@ def remove_packages(
             return RevisionChange(last_rev, last_rev)
 
     def remove(target: UVRevProject, sync: bool) -> str:
-        update_environments(target)
         uv("remove", *(() if sync else ("--no-sync",)), *packages, project=target)
         return f"Removed: {', '.join(packages)}"
 
@@ -834,7 +904,10 @@ def show_history(project: UVRevProject) -> str:
 
 
 def upgrade_packages(
-    project: UVRevProject, packages: tuple[str, ...], dry_run: bool = False
+    project: UVRevProject,
+    packages: tuple[str, ...],
+    dry_run: bool = False,
+    python: str | None = None,
 ) -> RevisionChange:
     """Upgrade packages or all if no packages specified.
 
@@ -842,13 +915,14 @@ def upgrade_packages(
         project: Project to upgrade packages in.
         packages: Package names to upgrade (empty for all).
         dry_run: Only report what would change.
+        python: Python request, pinned before the packages are upgraded
+            (see ``apply_change``).
 
     Returns:
         Changes compared to the previous revision.
     """
 
     def upgrade(target: UVRevProject, sync: bool) -> str:
-        update_environments(target)
         if packages:
             for pkg in packages:
                 sync_or_lock(target, sync, "--upgrade-package", pkg)
@@ -856,61 +930,31 @@ def upgrade_packages(
         sync_or_lock(target, sync, "--upgrade")
         return "Upgraded all packages"
 
-    return apply_change(project, upgrade, dry_run)
-
-
-PYTHON_MINOR_VERSION = re.compile(r"^\d+\.\d+$")
+    return apply_change(project, upgrade, dry_run, python)
 
 
 def upgrade_python(
-    project: UVRevProject, version: str, dry_run: bool = False
+    project: UVRevProject, request: str, dry_run: bool = False
 ) -> RevisionChange:
-    """Change the Python minor version of the environment (e.g. 3.12 to 3.14).
+    """Change the Python of the environment without upgrading packages.
 
-    Pins the version with ``uv python pin`` (which checks it against
-    ``requires-python``), recreates the virtual environment and updates ``uv.lock``.
+    Pins the request with ``uv python pin`` (see ``apply_change``) and syncs,
+    which recreates the virtual environment and updates ``uv.lock`` if needed.
     ``requires-python`` is not changed, so downgrades are possible as well.
     If uv fails, the files are reset to the last revision.
 
     Args:
-        project: Project to change the Python version of.
-        version: New Python version as ``major.minor``.
+        project: Project to change the Python of.
+        request: Python request, everything ``uv python pin`` accepts
+            (e.g. ``3.14``, ``3.14.1``, ``>=3.13,<3.15``, ``cpython-3.14``).
         dry_run: Only report what would change.
 
     Returns:
         Changes compared to the previous revision.
-
-    Raises:
-        ValueError: If the version is not given as ``major.minor``.
     """
-    if not PYTHON_MINOR_VERSION.match(version):
-        raise ValueError(
-            f"Python version must be given as major.minor (e.g. 3.14), not {version!r}"
-        )
-    old = (
-        project.python_version_path.read_text().strip()
-        if project.python_version_path.exists()
-        else ""
-    )
 
-    def pin(target: UVRevProject, sync: bool) -> str:
-        update_environments(target)
-        uv("python", "pin", version, project=target)
+    def sync_only(target: UVRevProject, sync: bool) -> str:
         sync_or_lock(target, sync)
-        return python_change_message(old, version)
+        return ""
 
-    return apply_change(project, pin, dry_run)
-
-
-def python_change_message(old: str, new: str) -> str:
-    """Revision message for a change of the Python minor version.
-
-    >>> python_change_message("3.12", "3.14")
-    'Upgraded Python: 3.12 → 3.14'
-    >>> python_change_message("3.14", "3.12")
-    'Downgraded Python: 3.14 → 3.12'
-    >>> python_change_message("", "3.14")
-    'Upgraded Python: ? → 3.14'
-    """
-    action = "Downgraded" if old and Version(old) > Version(new) else "Upgraded"
-    return f"{action} Python: {old or '?'} → {new}"
+    return apply_change(project, sync_only, dry_run, request)
