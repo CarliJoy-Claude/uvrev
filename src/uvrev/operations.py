@@ -55,8 +55,9 @@ def create_env(
     Args:
         base_dir: Base directory to create project in.
         name: Name of the project.
-        python: Python version to use, None to let uv choose its default.
-            uv pins the minor version in ``.python-version``.
+        python: Python request (a version, range, implementation or the path
+            of an interpreter), None to let uv choose its default.
+            uv pins it in ``.python-version``.
         force: Delete the folder of the environment first, if it was not
             created successfully (no ``.uvrev_created_successfully``).
         settings: Settings of uvrev (defaults if not given).
@@ -664,7 +665,8 @@ def add_packages(
         upgrade_all: Add with ``uv add --upgrade`` (so a package needing newer
             versions of locked packages can be added) and run ``uv sync --upgrade``
             afterwards, so everything is upgraded.
-        python: Python request, pinned before the packages are added
+        python: Python request (a version, range, implementation or the path
+            of an interpreter), pinned before the packages are added
             (see ``apply_change``).
         dry_run: Only report what would change.
 
@@ -764,7 +766,8 @@ def apply_change(
             message of the revision. Its second argument tells whether the
             venv is synced, otherwise only the files may be changed.
         dry_run: Apply the change to a scratch copy and only report it.
-        python: Python request to pin before the change.
+        python: Python request to pin before the change, e.g. ``3.14``,
+            ``>=3.13,<3.15``, ``cpython-3.14`` or ``/usr/bin/python3.14``.
 
     Returns:
         Changes compared to the previous revision.
@@ -915,7 +918,8 @@ def upgrade_packages(
         project: Project to upgrade packages in.
         packages: Package names to upgrade (empty for all).
         dry_run: Only report what would change.
-        python: Python request, pinned before the packages are upgraded
+        python: Python request (a version, range, implementation or the path
+            of an interpreter), pinned before the packages are upgraded
             (see ``apply_change``).
 
     Returns:
@@ -946,7 +950,8 @@ def upgrade_python(
     Args:
         project: Project to change the Python of.
         request: Python request, everything ``uv python pin`` accepts
-            (e.g. ``3.14``, ``3.14.1``, ``>=3.13,<3.15``, ``cpython-3.14``).
+            (e.g. ``3.14``, ``3.14.1``, ``>=3.13,<3.15``, ``cpython-3.14`` or
+            the path of an interpreter like ``/usr/bin/python3.14``).
         dry_run: Only report what would change.
 
     Returns:

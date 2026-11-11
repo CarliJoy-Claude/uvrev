@@ -473,7 +473,9 @@ def env_create_error_report(ctx: click.Context, message: str) -> EnvCreateReport
 @click.option(
     "--python",
     default=None,
-    help="Python version, if not given uv chooses its default interpreter",
+    help="Python request (e.g. 3.14, '>=3.13,<3.15', cpython-3.14 or the path "
+    "of an interpreter like /usr/bin/python3.14), if not given uv chooses its "
+    "default interpreter",
 )
 @click.option(
     "--force",
@@ -579,7 +581,8 @@ def env_list() -> None:
     "--python",
     default=None,
     help="Python request for 'uv python pin' (e.g. 3.14, '>=3.13,<3.15', "
-    "cpython-3.14), pinned before the packages are added",
+    "cpython-3.14 or the path of an interpreter like /usr/bin/python3.14), "
+    "pinned before the packages are added",
 )
 @dry_run_option
 @env_option
@@ -601,6 +604,7 @@ def add(
         uvrev add pandas                  # Add pandas
         uvrev add --upgrade-all pandas    # Add pandas and upgrade everything
         uvrev add --python 3.14 pandas    # Add pandas and switch to Python 3.14
+        uvrev add --python /usr/bin/python3.14 pandas    # ... to this interpreter
         uvrev add --dry-run pandas        # Show what adding pandas would change
     """
     change = run_operation(
@@ -677,7 +681,8 @@ def sync(project: UVRevProject, as_json: bool, verify_after: bool | None) -> Non
     "--python",
     default=None,
     help="Python request for 'uv python pin' (e.g. 3.14, '>=3.13,<3.15', "
-    "cpython-3.14), pinned before the packages are upgraded",
+    "cpython-3.14 or the path of an interpreter like /usr/bin/python3.14), "
+    "pinned before the packages are upgraded",
 )
 @dry_run_option
 @env_option
@@ -693,10 +698,12 @@ def upgrade(
 ) -> None:
     """Upgrade packages or all dependencies if no packages specified
 
+    \b
     Examples:
-        uvrev upgrade           # Upgrade all packages
-        uvrev upgrade pandas    # Upgrade only pandas
+        uvrev upgrade                  # Upgrade all packages
+        uvrev upgrade pandas           # Upgrade only pandas
         uvrev upgrade --python 3.14    # Upgrade all packages and switch to Python 3.14
+        uvrev upgrade --python /usr/bin/python3.14    # ... to this interpreter
     """
     change = run_operation(
         project,
@@ -743,8 +750,11 @@ def upgrade_python_cmd(
 
     To also upgrade the packages, use 'uvrev upgrade --python REQUEST'.
 
+    \b
     Examples:
         uvrev upgrade-python 3.14
+        uvrev upgrade-python '>=3.13,<3.15'
+        uvrev upgrade-python /usr/bin/python3.14    # path of an interpreter
     """
     change = run_operation(
         project,

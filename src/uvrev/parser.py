@@ -234,6 +234,8 @@ def parse_python_request(content: str) -> Mapping[NormalizedName, str]:
         {'python': '3.14'}
         >>> parse_python_request(">=3.13, <3.15\\n")
         {'python': '>=3.13, <3.15'}
+        >>> parse_python_request("/usr/bin/python3.14\\n")
+        {'python': '/usr/bin/python3.14'}
         >>> parse_python_request("")
         {}
     """
