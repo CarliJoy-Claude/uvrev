@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `--python` of `add` and `upgrade` and the argument of `upgrade-python` accept everything `uv python pin` accepts,
   not only `major.minor`: a version (`3.14`, `3.14.1`), a range (`'>=3.13,<3.15'`), an implementation
   (`cpython-3.14`, `pypy@3.11`) or the path of an interpreter. See the [README](README.md#python-version).
+  A relative path refers to the working directory and is pinned as absolute path.
 - JSON reports: new field `python_request` with the pinned Python request (the content of `.python-version`).
   - Change reports: `old` and `new` request, `null` if it did not change (like `python`).
   - `env create`: the pinned request.
@@ -28,8 +29,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (before: `Upgraded Python: 3.13 → 3.14` and `; pinned Python 3.14`).
 - `uvrev env create --json`: `python` is the exact version of the interpreter (e.g. `3.14.1`) instead of the pin,
   which is now in `python_request`.
-- `uvrev env create --python` for an existing environment warns if the pinned request differs as text
-  (before: if the minor version differs).
+- `uvrev env create --python REQUEST` pins the request as given (e.g. a range or the path of an interpreter).
+  Before, only the minor version of the interpreter found was pinned.
+- `uvrev env create --python` for an existing environment warns if the pinned request differs as text,
+  ignoring spaces (before: if the minor version differs).
 - `uvrev upgrade-python` no longer checks the request itself (exit code 2), uv does (exit code 1).
 
 ## [0.5] (2026-11-10)

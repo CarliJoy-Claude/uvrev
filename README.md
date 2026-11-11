@@ -368,6 +368,9 @@ They first pin the request with `uv python pin`, then run their uv command (`uv 
 
 - The request is everything `uv python pin` accepts: a version (`3.14`, `3.14.1`), a range (`'>=3.13,<3.15'`),
   an implementation (`cpython-3.14`, `pypy@3.11`) or the path of an interpreter (`/usr/bin/python3.14`).
+- A path can also be the folder of an installation that contains `bin/python` (e.g. another venv).
+- A relative path (`./bin/python`) refers to your working directory and is pinned as absolute path.
+  A path is pinned as given (symlinks are kept), so the environment only works where that interpreter exists.
 - `requires-python` is not changed, uv refuses requests that don't match it. So going back to an older
   version works the same way. `uvrev restore` restores the pinned request as well.
 - The revision tells what happened, e.g. `Upgraded Python: 3.13.9 → 3.14.1 (pinned 3.14)` (or `Downgraded`),
@@ -375,7 +378,8 @@ They first pin the request with `uv python pin`, then run their uv command (`uv 
   and nothing is mentioned if neither changed.
 - The JSON report has the interpreter versions in `python` and the requests in `python_request`.
 
-`uvrev env create` pins the request given with `--python`.
+`uvrev env create` pins the request given with `--python` as well, exactly as given
+(e.g. the path of an interpreter or a range, not only the minor version of the interpreter found).
 Without it, uv chooses its default interpreter and pins its minor version.
 `UV_PYTHON` is ignored, so an environment always uses the version of its `.python-version`.
 
@@ -416,7 +420,7 @@ The file is ignored by git (`.git/info/exclude`).
 
 - If the environment was created successfully before, `uvrev env create` does nothing.
   `--python` is **not** applied to the existing environment: uvrev warns if another request is pinned
-  (the texts are compared), and `--json` reports the pinned request as `python_request`, the version of
+  (the texts are compared, ignoring spaces), and `--json` reports the pinned request as `python_request`, the version of
   its interpreter as `python` and `"created": false`.
   Change it with `uvrev upgrade-python`.
 - If the folder exists without the file (e.g. an aborted `uvrev env create`), it fails.

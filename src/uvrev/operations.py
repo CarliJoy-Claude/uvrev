@@ -100,6 +100,11 @@ def create_env(
         project=project,
     )
     target.joinpath("main.py").unlink(missing_ok=True)
+    if python:
+        # uv init only pins the minor version of the interpreter it found:
+        # pin the request itself (e.g. a range or the path of an interpreter),
+        # like the commands that change the Python later
+        uv("python", "pin", python, project=project)
     # Configure pyproject.toml
     data = read_pyproject(project)
     data.setdefault("tool", {}).setdefault("uv", {})["package"] = False

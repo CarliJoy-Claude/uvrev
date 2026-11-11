@@ -503,3 +503,121 @@ class TestUpgradeWithPython:
             "(rev 1) Upgraded all packages; "
             f"Upgraded Python: {old_python} → {new_python} (pinned {new})"
         )
+
+
+def real_interpreter(project: UVRevProject) -> Path:
+    """The interpreter the venv of the project links to"""
+    return (project.venv_path / "bin" / "python").resolve()
+
+
+class TestInterpreterPath:
+    """A Python request can be the path of an interpreter"""
+
+    def test_relative_path(
+        self, project: UVRevProject, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A relative path refers to the working directory, not to the environment"""
+        interpreter = real_interpreter(project)
+        exact = python_version(project)
+        monkeypatch.chdir(interpreter.parent)
+
+        result = invoke("upgrade-python", f"./{interpreter.name}", "--json")
+
+        assert result.exit_code == 0, result.output
+        assert f"uv python pin {interpreter}" in result.stderr
+        report: dict[str, Any] = json.loads(result.stdout)
+        # the absolute path is pinned and reported
+        assert report["arguments"] == [str(interpreter)]
+        assert report["python_request"]["new"] == str(interpreter)
+        assert report["python"] is None
+        assert pinned(project) == str(interpreter)
+        assert python_version(project) == exact
+
+    def test_relative_path_dry_run(
+        self, project: UVRevProject, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The dry run happens in a temporary folder, the path is still found"""
+        interpreter = real_interpreter(project)
+        current = pinned(project)
+        monkeypatch.chdir(interpreter.parent.parent)
+        relative = f"{interpreter.parent.name}/{interpreter.name}"
+
+        result = invoke("upgrade", "--python", relative, "--dry-run", "--json")
+
+        assert result.exit_code == 0, result.output
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["options"] == {"python": str(interpreter), "dry_run": True}
+        assert report["python_request"] == {"old": current, "new": str(interpreter)}
+        assert pinned(project) == current
+
+    def test_add_with_path(self, project: UVRevProject) -> None:
+        interpreter = real_interpreter(project)
+
+        result = invoke("add", "--python", str(interpreter), "peppercorn", "--json")
+
+        assert result.exit_code == 0, result.output
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["python_request"]["new"] == str(interpreter)
+        assert pinned(project) == str(interpreter)
+        subject = last_commit_message(project).splitlines()[0]
+        assert subject == f"(rev 1) Added: peppercorn; Pinned Python {interpreter}"
+
+    @pytest.mark.parametrize("kind", ["missing", "empty_folder"])
+    def test_wrong_path(self, project: UVRevProject, kind: str, tmp_path: Path) -> None:
+        """uv pins a wrong path, but fails to use it: the files are reset
+
+        (A folder is a valid request for uv, if it contains bin/python.)
+        """
+        current = pinned(project)
+        folder = tmp_path / "no-python"
+        folder.mkdir()
+        path = folder / "python" if kind == "missing" else folder
+
+        result = invoke("upgrade-python", str(path), "--json")
+
+        assert result.exit_code == 1
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["status"] == "error"
+        assert pinned(project) == current
+        status = git("status", "--porcelain", project=project, capture_output=True)
+        assert status == ""
+
+    def test_env_create_pins_path(
+        self, project: UVRevProject, fake_basedir: Path
+    ) -> None:
+        """env create pins the path itself, not only the minor version"""
+        interpreter = real_interpreter(project)
+
+        result = invoke(
+            "env", "create", "byPath", "--python", str(interpreter), "--json"
+        )
+
+        assert result.exit_code == 0, result.output
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["python_request"] == str(interpreter)
+        assert report["python"] == python_version(project)
+        created = UVRevProject(fake_basedir / "byPath")
+        assert pinned(created) == str(interpreter)
+        status = git("status", "--porcelain", project=created, capture_output=True)
+        assert status == ""
+
+        # the same request again is no reason for a warning
+        result = invoke("env", "create", "byPath", "--python", str(interpreter))
+        assert result.exit_code == 0
+        assert "is ignored" not in result.stderr
+
+    def test_env_create_pins_range(
+        self, project: UVRevProject, fake_basedir: Path
+    ) -> None:
+        """A range is pinned as given, uv stores it with spaces"""
+        major, minor = map(int, pinned(project).split("."))
+        request = f">={major}.{minor},<{major}.{minor + 1}"
+
+        result = invoke("env", "create", "byRange", "--python", request, "--json")
+
+        assert result.exit_code == 0, result.output
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["python_request"] == f">={major}.{minor}, <{major}.{minor + 1}"
+
+        result = invoke("env", "create", "byRange", "--python", request)
+        assert "is ignored" not in result.stderr

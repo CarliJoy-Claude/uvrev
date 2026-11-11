@@ -1,5 +1,7 @@
+import os
 import tomllib
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, Final
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -221,6 +223,55 @@ def parse_python_lock(content: str) -> Mapping[NormalizedName, Version]:
     if not (version := content.strip()):
         return {}
     return {canonicalize_name("python"): Version(version)}
+
+
+def absolute_python_request(request: str, cwd: Path) -> str:
+    """Make a Python request that is a path absolute.
+
+    uv runs in the folder of the environment (a dry run in a temporary copy),
+    so a relative path of an interpreter would be searched there instead of
+    where the user is. Symlinks are kept, the path is pinned as given.
+
+    Args:
+        request: Python request, see ``uv python pin``.
+        cwd: Folder a relative path refers to, the working directory of the user.
+
+    Returns:
+        The request, absolute if it is a path (it contains a path separator
+        or starts with ``~``). Versions, ranges and implementations are unchanged.
+
+    Examples:
+        >>> cwd = Path("/home/user")
+        >>> absolute_python_request("./bin/python3.14", cwd)
+        '/home/user/bin/python3.14'
+        >>> absolute_python_request("../opt/python", cwd)
+        '/home/opt/python'
+        >>> absolute_python_request("/usr/bin/python3.14", cwd)
+        '/usr/bin/python3.14'
+        >>> absolute_python_request("~/python", cwd) == str(Path.home() / "python")
+        True
+        >>> [absolute_python_request(r, cwd) for r in ("3.14", ">=3.13,<3.15", "pypy@3.11")]
+        ['3.14', '>=3.13,<3.15', 'pypy@3.11']
+    """
+    separators = tuple(filter(None, (os.sep, os.altsep)))
+    if not request.startswith("~") and not any(sep in request for sep in separators):
+        return request
+    return os.path.normpath(cwd / Path(request).expanduser())
+
+
+def same_python_request(first: str | None, second: str | None) -> bool:
+    """True if two Python requests are the same, ignoring whitespace.
+
+    uv stores a range with spaces (``>=3.13, <3.15`` for ``>=3.13,<3.15``).
+
+    >>> same_python_request(">=3.13,<3.15", ">=3.13, <3.15")
+    True
+    >>> same_python_request("3.13", "3.14"), same_python_request("3.13", None)
+    (False, False)
+    """
+    if first is None or second is None:
+        return first is second
+    return "".join(first.split()) == "".join(second.split())
 
 
 def parse_python_request(content: str) -> Mapping[NormalizedName, str]:

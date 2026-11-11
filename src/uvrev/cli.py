@@ -32,6 +32,7 @@ from .operations import (
     upgrade_packages,
     upgrade_python,
 )
+from .parser import absolute_python_request, same_python_request
 from .protection import (
     permissions,
     protect as protect_venv,
@@ -443,6 +444,13 @@ def env() -> None:
     """Manage environments"""
 
 
+def python_request_callback(
+    _ctx: click.Context | None, _param: click.Parameter | None, value: str | None
+) -> str | None:
+    """A relative path of an interpreter refers to the working directory"""
+    return absolute_python_request(value, Path.cwd()) if value else value
+
+
 def env_create_report(
     ctx: click.Context, created: bool, error_message: str | None = None
 ) -> EnvCreateReport:
@@ -473,6 +481,7 @@ def env_create_error_report(ctx: click.Context, message: str) -> EnvCreateReport
 @click.option(
     "--python",
     default=None,
+    callback=python_request_callback,
     help="Python request (e.g. 3.14, '>=3.13,<3.15', cpython-3.14 or the path "
     "of an interpreter like /usr/bin/python3.14), if not given uv chooses its "
     "default interpreter",
@@ -513,7 +522,7 @@ def env_create(
     else:
         success(f"Project '{project_name}' already exists at {project.project_path}")
         pinned = python_request(project)
-        if python and python != pinned:
+        if python and not same_python_request(python, pinned):
             warning(
                 f"Project '{project_name}' has Python {pinned} pinned, "
                 f"--python {python} is ignored. "
@@ -580,6 +589,7 @@ def env_list() -> None:
 @click.option(
     "--python",
     default=None,
+    callback=python_request_callback,
     help="Python request for 'uv python pin' (e.g. 3.14, '>=3.13,<3.15', "
     "cpython-3.14 or the path of an interpreter like /usr/bin/python3.14), "
     "pinned before the packages are added",
@@ -680,6 +690,7 @@ def sync(project: UVRevProject, as_json: bool, verify_after: bool | None) -> Non
 @click.option(
     "--python",
     default=None,
+    callback=python_request_callback,
     help="Python request for 'uv python pin' (e.g. 3.14, '>=3.13,<3.15', "
     "cpython-3.14 or the path of an interpreter like /usr/bin/python3.14), "
     "pinned before the packages are upgraded",
@@ -727,7 +738,7 @@ def upgrade(
 @cli.command(
     "upgrade-python", error_report=change_error_report, report_options=("dry_run",)
 )
-@click.argument("request", metavar="REQUEST")
+@click.argument("request", metavar="REQUEST", callback=python_request_callback)
 @dry_run_option
 @env_option
 @json_option

@@ -143,7 +143,11 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   accepts: version, range, implementation, path), never parse it as a version.
   Compare interpreters with `get_python_version()`. `add --python`,
   `upgrade --python` and `upgrade-python` share the pin step in `apply_change()`
-  (pin first, then the command's uv call).
+  (pin first, then the command's uv call). `env create` pins the request too.
+- uv runs in the folder of the environment (a dry run in a temporary copy), not
+  in the working directory of the user: paths given by the user must be made
+  absolute first (`absolute_python_request()`, a click callback in `cli.py`).
+  `uv python pin` accepts a wrong path, only the following uv command fails.
 - `uv add` keeps the locked versions of other packages; with `--upgrade-all`
   use `uv add --upgrade`, then `uv sync --upgrade`.
 
