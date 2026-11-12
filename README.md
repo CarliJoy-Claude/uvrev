@@ -67,7 +67,7 @@ uvrev --help
 | `uvrev env fix`    | Mark an environment as created successfully (see [Creating Environments](#creating-environments)) |
 | `uvrev add`        | Add packages to the current project (`--upgrade-all` also upgrades all others, `--python` changes the Python) |
 | `uvrev remove`     | Remove packages from the current project (`--ignore-missing` skips packages that are no dependencies) |
-| `uvrev sync`       | Sync project dependencies |
+| `uvrev sync`       | Sync project dependencies (`--clean` deletes the uv cache and the venv first) |
 | `uvrev upgrade`    | Upgrade all or the given packages (`--python` changes the Python) |
 | `uvrev upgrade-python` | Change the Python (e.g. `3.12` to `3.14`) without upgrading packages |
 | `uvrev list`       | List installed packages in the current environment |
@@ -76,9 +76,9 @@ uvrev --help
 | `uvrev path`       | Show the path to the current project |
 | `uvrev run`        | Run uv commands in the project |
 | `uvrev tool run`   | Run a tool like `uvx`, with the dependencies locked in its release |
-| `uvrev protect`    | Make the venv read-only |
-| `uvrev unprotect`  | Make the venv writable |
-| `uvrev verify`     | Check the venv against the installed packages, `--fix` repairs it |
+| `uvrev protect`    | Repair an unprotected venv and make it read-only |
+| `uvrev unprotect`  | Make the venv writable for a hotfix |
+| `uvrev verify`     | Check every file of the venv against the installed packages, `--fix` repairs it |
 | `uvrev settings`   | Show the settings and the location of the settings file |
 
 ---
@@ -93,11 +93,6 @@ uvrev makes the `.venv` writable (`chmod -R u+w .venv`) only while `uv` changes 
 again afterwards, even if `uv` fails. `uvrev run` syncs the environment first if needed and then
 runs the command with the protected `.venv`. The environments of `uvrev tool run` are protected as well.
 
-```bash
-uvrev unprotect   # make the .venv writable, e.g. to debug something
-uvrev protect     # make it read-only again (the next change protects it anyway)
-```
-
 uv hardlinks the installed files from its cache, so `chmod` also changes the permissions of
 these files in the uv cache, and with that in other environments using the same files.
 If that is a problem, disable the protection or use other modes (see [Settings](#settings)).
@@ -105,23 +100,84 @@ If that is a problem, disable the protection or use other modes (see [Settings](
 The protection needs the `chmod` command. If it is missing, uvrev stops with an error
 explaining how to disable the protection.
 
+### Hotfixes: `unprotect` and `protect`
+
+```bash
+uvrev unprotect   # make the .venv writable for a hotfix
+# ... change files in the .venv ...
+uvrev protect     # repair the .venv and make it read-only again
+```
+
+`uvrev unprotect` is made for hotfixes: it is fast, as nothing is checked, and it can not be
+interrupted with Ctrl+C. It marks the environment with the file `.unprotected`,
+which contains the time when the `.venv` became writable.
+
+The mark is the reason for a **repair**. It is done by `uvrev protect`, and by every command that changes
+the environment (`add`, `remove`, `sync`, `upgrade`, `upgrade-python`, `restore`) before it does its work.
+Afterwards the `.venv` is valid again: it only contains the files of the packages locked in `uv.lock`,
+with the content of their wheels.
+
+- Packages with files changed since `unprotect` are removed from the uv cache and reinstalled.
+  A file counts as changed if its ctime is later than the time in `.unprotected`.
+  The ctime can not be set back by a user, unlike the modification time.
+- Files that no package installed are removed, in the whole `.venv`.
+- The bytecode (`__pycache__`) is brought in sync with the sources: without source it is removed,
+  the rest is compiled again (setting `compile_bytecode`).
+- The `.venv` is protected and `.unprotected` is removed.
+
+The `.venv` and the uv cache are kept, so running processes are not disturbed more than necessary.
+`uvrev run` does **not** repair and does not sync an unprotected environment: it runs with the hotfix.
+`uvrev unprotect` for an environment that is unprotected already does nothing, the time is kept.
+
+What the repair can not do:
+
+- The files of the virtual environment itself (`pyvenv.cfg`, the `python` links and the `activate` scripts)
+  are not part of any package. If one of them was changed, the repair fails and the environment stays marked.
+  Run `uvrev sync --clean`.
+- If `uvrev unprotect` did not finish (e.g. it was killed) or `.unprotected` was changed, there is no time
+  that can be trusted. `uvrev unprotect` still makes the `.venv` writable and warns. The repair then
+  compares every file with the hash recorded by its package, like `uvrev verify --fix`, which is slower.
+  It warns that `uvrev sync --clean` might be needed, as this can not see everything (see below).
+- Other environments: uvrev is made for one environment. With several, a changed file of a shared package
+  is changed in the others as well, where nobody knows about it. `uvrev unprotect` warns about this.
+  Run `uvrev verify --fix` for the others.
+- The time comes from the clock of the filesystem. If the system clock is set back while the environment
+  is unprotected, later changes can be missed. `uvrev verify --fix` does not depend on the time.
+
+### Starting anew: `sync --clean`
+
+```bash
+uvrev sync --clean
+```
+
+deletes the **complete** uv cache and the `.venv` and installs everything again from `uv.lock`.
+It is the way out of every state that can not be repaired. It needs the network,
+and running processes of the environment lose their files.
+The JSON report has `"clean": true` in `options`. It lists no changed packages if the versions are the
+same as before, although everything was installed again.
+
 ## Verify Environments
 
-`uvrev verify` compares the `.venv` with the `RECORD` files of the installed packages and finds
+`uvrev verify` checks the whole `.venv` and finds
 
-- missing or modified files,
+- missing or modified files of the installed packages, compared with the hashes in their `RECORD` files,
 - packages not in sync with `uv.lock`,
-- files not installed by any package (only a warning).
+- files that no package installed. Allowed are the files of the virtual environment itself
+  and bytecode of an existing source.
 
 `uvrev verify` exits with `1` if problems were found.
 `uvrev verify --fix` removes the affected packages from the uv cache (`uv cache clean --force`),
-reinstalls them and protects the `.venv` again (if enabled).
+reinstalls them, removes the files that no package installed, brings the bytecode in sync
+and protects the `.venv` again (if enabled). A mark of `uvrev unprotect` is removed.
+
+It reads every file, so it is slower than the repair after `uvrev unprotect`, but it does not depend on
+timestamps. It trusts the `RECORD` files in the `.venv` and can not check the files of the virtual
+environment itself. To be sure about those, use `uvrev sync --clean`.
 
 uv hardlinks the installed files from its cache, so a file changed in a `.venv` is changed in the
 cache as well, and in all other environments using it ([uv#22979](https://github.com/astral-sh/uv/issues/22979)).
 Reinstalling alone would link the changed file again, so the cache entry is removed first.
 Other environments sharing the changed file are only repaired by running `uvrev verify --fix` for them, too.
-Files not installed by any package are only reported, as they might be someone's work.
 
 To verify and fix the environment after every change, pass `--verify` to
 `add`, `remove`, `sync`, `upgrade`, `upgrade-python` and `restore`, or enable `verify_after_change`.
@@ -200,6 +256,7 @@ uvrev add pandas numpy --json
   "python": null,
   "python_request": null,
   "environments": null,
+  "repair": null,
   "verify": null,
   "error_message": null
 }
@@ -223,6 +280,7 @@ uvrev add pandas numpy --json
 | `python` | `object \| null` | `old` and `new` exact version of the Python interpreter, if it changed. `null` if it did not change. |
 | `python_request` | `object \| null` | `old` and `new` pinned Python request (the content of `.python-version`, e.g. `3.14`, `>=3.13, <3.15` or `/usr/bin/python3.14`), if it changed. `null` if it did not change. See [Python Version](#python-version). |
 | `environments` | `object \| null` | `old` and `new` markers of `tool.uv.environments` (arrays of strings), if they changed. `null` if they did not change. See [Supported Environments](#supported-environments). |
+| `repair` | `object \| null` | The repair of an environment that was unprotected with `uvrev unprotect`, done before the change: `mode` (`fast`: by the files changed since unprotecting, `full`: by the hash of every file), `packages` (the reinstalled packages) and `removed_files`. `null` if the environment was not unprotected. See [Hotfixes](#hotfixes-unprotect-and-protect). |
 | `verify` | `object \| null` | The result of verifying the venv after the change (`--verify` or the setting `verify_after_change`): `problems`, `remaining_problems` and `fixed` like in the [report of `uvrev verify`](#reports-of-other-commands). `null` if it did not run. If problems remain, `status` is `"error"`, but the other fields still describe the change that was made. |
 | `error_message` | `string \| null` | The error, if `status` is `"error"`. |
 
@@ -266,9 +324,11 @@ So a dry run needs the package index like the real command, but no disk space fo
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `changed` | `boolean` | `true` if permissions were changed (compared before and after `chmod`). |
+| `changed` | `boolean` | `unprotect`: `true` if the environment was not unprotected before. `protect`: `true` if it was unprotected (and therefore repaired). The permissions are not inspected. |
 | `protected` | `boolean \| null` | The state afterwards, `null` if the command failed. |
 | `path` | `string` | Path of the `.venv`. |
+| `state` | `string \| null` | `unprotect`: `post-chmod` (the time of unprotecting is known) or `forced` (it is not, the repair will compare every file). `null` for `protect`. |
+| `repair` | `object \| null` | `protect`: the repair that was done, like `repair` of the change report. `null` if the environment was not unprotected, and for `unprotect`. |
 
 `uvrev verify [--fix] --json` (option `fix`):
 
@@ -278,7 +338,8 @@ So a dry run needs the package index like the real command, but no disk space fo
 | `remaining_problems` | `array[object]` | The problems left after `--fix`, the same as `problems` without `--fix`. |
 | `fixed` | `boolean` | `true` if `--fix` repaired at least one problem. |
 
-If problems that are no warnings remain, `status` is `"error"`, `error_message` says how many, and the exit code is `1`.
+If problems remain, `status` is `"error"`, `error_message` says how many, and the exit code is `1`.
+`is_warning` is always `false`: files that no package installed were warnings before, now `--fix` removes them.
 
 ```json
 {

@@ -97,6 +97,8 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   match its `pyproject.toml`: run `uv lock` before using `--locked`.
 - The `uv.lock` of `tests/data/upgradeable` requires Python 3.14: tests must not
   install it with `uv sync --frozen`, as CI also runs older Python versions.
+- `uvrev sync --clean` deletes the complete uv cache: tests of it must set a
+  private `UV_CACHE_DIR`.
 - To test a missing command, restrict `PATH` to a folder with symlinks to the
   others (`only_commands` in `tests/test_errors.py`).
 - There is no `tests/__init__.py`: import helpers with `from conftest import ...`.
@@ -120,6 +122,23 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   it is deleted (`env create --force`, `tool run --refresh`).
 - If protection is enabled and `chmod` is missing, fail with an error that
   explains why and how to disable the protection.
+- `uvrev unprotect` is for hotfixes: fast, always succeeds, not interruptible.
+  It writes the marker `.unprotected` (`marker.py`: time + state, atomic,
+  read-only). The next protecting command repairs the venv (`repair.py`):
+  `post-chmod` by the files with a ctime later than the stamp, every other
+  state by the hash of every file. Never delete the `.venv` or the cache for a
+  repair (running processes), only `sync --clean` does.
+  `writable()` / `writable_venv()` are for uvrev's own changes and never touch
+  the marker. `uvrev run` never repairs.
+- Timestamps (tested on ext3 and ext4): `chmod` always changes the ctime, also
+  if the mode stays the same, and never the mtime. The mtime can be set back,
+  the ctime can not. Old ext3 only stores seconds. `time.time()` is not aligned
+  with file timestamps: take "now" from the filesystem (touch a file, read its
+  ctime) and wait until its clock moved on (`wait_for_clock()`).
+- A valid venv contains only: the files in the `RECORD` of its packages, the
+  files of the venv itself (`is_venv_file()`, they can not be restored) and
+  bytecode of an existing source. `uv sync --reinstall` does not restore the
+  venv's own files.
 - Settings: typed-settings with frozen dataclasses, `[uvrev]` table in
   `user_config_path("uvrev") / "config.toml"`, more files in `UVREV_SETTINGS`,
   overridable by `UVREV_*` environment variables.
