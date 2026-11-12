@@ -291,13 +291,16 @@ class TestEnvCreateIdempotent:
         assert "is not a git repository" in result.output
         assert UVRevProject(target).created_successfully()
         exclude = target / ".git" / "info" / "exclude"
-        assert exclude.read_text() == f"{constants.CREATED_MARKER_FILE}\n"
+        ignored = (
+            f"{constants.CREATED_MARKER_FILE}\n{constants.UNPROTECTED_MARKER_FILE}\n"
+        )
+        assert exclude.read_text() == ignored
 
         # existing ignores are kept and the marker is added only once
         exclude.write_text("*.log")
         assert invoke("env", "fix", "old").exit_code == 0
         assert invoke("env", "fix", "old").exit_code == 0
-        assert exclude.read_text() == f"*.log\n{constants.CREATED_MARKER_FILE}\n"
+        assert exclude.read_text() == f"*.log\n{ignored}"
 
         result = invoke("path", "-e", "old")
         assert "was not created successfully" not in result.output

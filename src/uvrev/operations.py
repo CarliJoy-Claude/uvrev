@@ -20,7 +20,8 @@ from . import constants
 from .commands import git, uv
 from .differ import Diff, create_changelog
 from .exceptions import RevisionNotFoundError
-from .io import read_pyproject, write_pyproject
+from .io import exclude_from_git, read_pyproject, write_pyproject
+from .marker import remove_marker
 from .parser import (
     any_version,
     parse_pyproject_deps,
@@ -173,11 +174,9 @@ def mark_created(project: UVRevProject) -> None:
     The marker contains the uvrev version and is ignored by git
     (``.git/info/exclude``, so no tracked file is changed).
     """
-    exclude = project.project_path / ".git" / "info" / "exclude"
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    ignored = exclude.read_text().splitlines() if exclude.exists() else []
-    if constants.CREATED_MARKER_FILE not in ignored:
-        exclude.write_text("\n".join((*ignored, constants.CREATED_MARKER_FILE)) + "\n")
+    exclude_from_git(
+        project, constants.CREATED_MARKER_FILE, constants.UNPROTECTED_MARKER_FILE
+    )
     project.created_marker_path.write_text(f"{package_version('uvrev')}\n")
 
 
@@ -283,13 +282,8 @@ def get_python_version(project: UVRevProject) -> Version | None:
     Returns:
         Version of the interpreter, None if the virtual environment does not exist.
     """
-    for python in (
-        project.venv_path / "bin" / "python",
-        project.venv_path / "Scripts" / "python.exe",
-    ):
-        if python.exists():
-            return interpreter_version(python)
-    return None
+    python = project.interpreter
+    return interpreter_version(python) if python else None
 
 
 def interpreter_version(python: Path) -> Version:
@@ -863,21 +857,36 @@ def list_venv_packages(project: UVRevProject) -> Mapping[NormalizedName, Version
     }
 
 
-def sync_packages(project: UVRevProject) -> RevisionChange:
+def sync_packages(project: UVRevProject, clean: bool = False) -> RevisionChange:
     """Sync the virtual environment with the lock file.
 
     As the lock file is not changed, no revision is created.
 
     Args:
         project: Project to sync.
+        clean: Start anew: the complete uv cache and the virtual environment
+            are deleted first, so everything is downloaded and installed again.
+            This is the way out if the environment can not be repaired
+            (it is no longer marked as unprotected afterwards). Running
+            processes of the environment lose their files.
 
     Returns:
-        Changes of the installed packages.
+        Changes of the installed packages (the versions, so a clean sync of
+        an intact environment reports no changes).
     """
     installed_before = list_venv_packages(project)
     python_before = get_python_version(project)
+    if clean:
+        # a protected .venv can not be deleted
+        unprotect(project)
+        # --force: don't wait for other uv processes using the cache
+        uv("cache", "clean", "--force", project=project)
+        if project.venv_path.exists():
+            shutil.rmtree(project.venv_path)
     with writable_venv(project):
         uv("sync", "--frozen", project=project)
+    if clean:
+        remove_marker(project.unprotected_marker_path)
     python_after = get_python_version(project)
     rev = get_last_revision_number(project)
     return RevisionChange(

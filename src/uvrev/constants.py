@@ -10,3 +10,5 @@ PYTHON_VERSION_FILE: Final[str] = ".python-version"
 PYTHON_VERSION_LOCK_FILE: Final[str] = ".python-version.lock"
 # written as the last step of ``uvrev env create``, contains the uvrev version
 CREATED_MARKER_FILE: Final[str] = ".uvrev_created_successfully"
+# exists while the venv is unprotected by ``uvrev unprotect``, see marker.py
+UNPROTECTED_MARKER_FILE: Final[str] = ".unprotected"

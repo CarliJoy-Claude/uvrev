@@ -2,7 +2,9 @@ import base64
 import csv
 import hashlib
 import os
-from collections.abc import Iterator, Mapping
+import re
+import subprocess
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from importlib.metadata import Distribution, distributions
 from pathlib import Path
@@ -11,7 +13,8 @@ from typing import Final, Literal
 
 from packaging.utils import NormalizedName, canonicalize_name
 
-from .commands import uv
+from .commands import STDERR_FD, show_cmd, uv
+from .marker import remove_marker
 from .protection import writable_venv
 from .types import SubprocessFailure, UVRevProject
 
@@ -19,11 +22,39 @@ type ProblemKind = Literal["missing", "modified", "not_synced", "untracked"]
 
 # Problems fixed by reinstalling the package
 REINSTALL: Final[frozenset[ProblemKind]] = frozenset({"missing", "modified"})
-# Problems that are only reported, as fixing them could delete someone's work
-WARNINGS: Final[frozenset[ProblemKind]] = frozenset({"untracked"})
+# Problems that are only reported. There is none anymore: a valid venv only
+# contains the files of its packages, so untracked files are removed.
+WARNINGS: Final[frozenset[ProblemKind]] = frozenset()
 
-# Files in site-packages created with the venv, not by a package
-VENV_FILES: Final[frozenset[str]] = frozenset({"_virtualenv.py", "_virtualenv.pth"})
+# The files a venv consists of itself, they are not installed by a package and
+# can not be verified or restored (only by creating the venv again).
+# In the root of the venv:
+VENV_ROOT_FILES: Final[frozenset[str]] = frozenset(
+    {"pyvenv.cfg", ".gitignore", "CACHEDIR.TAG", ".lock"}
+)
+# next to the interpreter (bin or Scripts):
+VENV_SCRIPTS: Final[frozenset[str]] = frozenset(
+    {
+        "activate",
+        "activate.bat",
+        "activate.csh",
+        "activate.fish",
+        "activate.nu",
+        "activate.ps1",
+        "activate.xsh",
+        "activate_this.py",
+        "deactivate.bat",
+        "pydoc.bat",
+    }
+)
+VENV_INTERPRETER: Final[re.Pattern[str]] = re.compile(
+    r"(python|pypy)w?[0-9.]*t?(\.exe)?"
+)
+SCRIPT_DIRECTORIES: Final[frozenset[str]] = frozenset({"bin", "Scripts"})
+# in site-packages:
+VENV_SITE_FILES: Final[frozenset[str]] = frozenset(
+    {"_virtualenv.py", "_virtualenv.pth"}
+)
 
 DESCRIPTIONS: Final[Mapping[ProblemKind, str]] = MappingProxyType(
     {
@@ -105,15 +136,83 @@ def read_record(dist: Distribution) -> tuple[RecordEntry, ...]:
     return tuple(entries)
 
 
+def is_venv_file(project: UVRevProject, path: Path) -> bool:
+    """True for the files a venv consists of itself (see ``VENV_ROOT_FILES``).
+
+    >>> project = UVRevProject(Path("/env"))
+    >>> is_venv_file(project, Path("/env/.venv/pyvenv.cfg"))
+    True
+    >>> is_venv_file(project, Path("/env/.venv/bin/python3.14"))
+    True
+    >>> is_venv_file(project, Path("/env/.venv/bin/activate.fish"))
+    True
+    >>> is_venv_file(project, Path("/env/.venv/bin/python-evil"))
+    False
+    >>> is_venv_file(project, Path("/env/.venv/lib/pyvenv.cfg"))
+    False
+    """
+    parts = path.relative_to(project.venv_path.resolve()).parts
+    if len(parts) == 1:
+        return parts[0] in VENV_ROOT_FILES
+    if len(parts) == 2 and parts[0] in SCRIPT_DIRECTORIES:  # noqa: PLR2004
+        name = parts[1]
+        return name in VENV_SCRIPTS or bool(VENV_INTERPRETER.fullmatch(name))
+    return path.name in VENV_SITE_FILES and path.parent in project.site_packages
+
+
+def bytecode_source(path: Path) -> Path | None:
+    """The source of a bytecode file in ``__pycache__``, None for other files.
+
+    >>> bytecode_source(Path("pkg/__pycache__/mod.cpython-314.pyc"))
+    PosixPath('pkg/mod.py')
+    >>> bytecode_source(Path("pkg/__pycache__/mod.cpython-314.opt-1.pyc"))
+    PosixPath('pkg/mod.py')
+    >>> bytecode_source(Path("pkg/mod.pyc")) is None
+    True
+    """
+    if path.suffix != ".pyc" or path.parent.name != "__pycache__":
+        return None
+    return path.parent.parent / f"{path.name.split('.')[0]}.py"
+
+
+def venv_files(project: UVRevProject) -> Iterator[Path]:
+    """All files of the venv (links to folders like lib64 are not followed)"""
+    for directory, _, filenames in os.walk(project.venv_path.resolve()):
+        for name in filenames:
+            yield Path(directory, name)
+
+
+def tracked_files(project: UVRevProject) -> Mapping[Path, NormalizedName]:
+    """The files installed by the packages (their RECORD) and their package"""
+    site_packages = [str(path) for path in project.site_packages]
+    return {
+        entry.path: canonicalize_name(dist.metadata["Name"])
+        for dist in distributions(path=site_packages)
+        for entry in read_record(dist)
+    }
+
+
+def is_untracked(
+    project: UVRevProject, path: Path, tracked: Mapping[Path, NormalizedName]
+) -> bool:
+    """True if a file must not be in a valid venv.
+
+    Allowed are the files of the packages, the files of the venv itself and
+    bytecode of an existing source (it is not part of the packages).
+    """
+    if path in tracked or is_venv_file(project, path):
+        return False
+    source = bytecode_source(path)
+    return source is None or not source.exists()
+
+
 def _check_records(project: UVRevProject) -> Iterator[Problem]:
     """Compare the files of all installed packages with their RECORD"""
-    tracked: set[Path] = set()
     site_packages = project.site_packages
     for dist in distributions(path=[str(path) for path in site_packages]):
         package = canonicalize_name(dist.metadata["Name"])
         for entry in read_record(dist):
             path = entry.path
-            tracked.add(path)
             if entry.algorithm is None or entry.hash is None:
                 # e.g. RECORD itself, nothing to compare
                 continue
@@ -127,15 +226,10 @@ def _check_records(project: UVRevProject) -> Iterator[Problem]:
             ):
                 yield Problem("modified", path, package)
 
-    for directory in site_packages:
-        for dirpath, dirnames, filenames in os.walk(directory):
-            # bytecode is created on install or at runtime, it is not part of RECORD
-            dirnames[:] = [name for name in dirnames if name != "__pycache__"]
-            for name in filenames:
-                path = Path(dirpath, name)
-                is_venv_file = name in VENV_FILES and path.parent == directory
-                if path not in tracked and not is_venv_file:
-                    yield Problem("untracked", path)
+    tracked = tracked_files(project)
+    for path in venv_files(project):
+        if is_untracked(project, path, tracked):
+            yield Problem("untracked", path)
 
 
 def _is_synced(project: UVRevProject) -> bool:
@@ -161,9 +255,9 @@ class VerifyResult:
     def errors(self) -> tuple[Problem, ...]:
         """The remaining problems that are no warnings
 
-        >>> warning = Problem("untracked", Path("a.py"))
-        >>> error = Problem("modified", Path("b.py"))
-        >>> VerifyResult((warning, error), (warning, error)).errors == (error,)
+        >>> untracked = Problem("untracked", Path("a.py"))
+        >>> modified = Problem("modified", Path("b.py"))
+        >>> VerifyResult((untracked, modified), (modified,)).errors == (modified,)
         True
         """
         return tuple(problem for problem in self.remaining if not problem.is_warning)
@@ -177,47 +271,105 @@ def find_problems(project: UVRevProject) -> tuple[Problem, ...]:
     return tuple(problems)
 
 
-def verify(project: UVRevProject, fix: bool = False) -> VerifyResult:
-    """Verify the venv and optionally fix it.
+def sync_bytecode(project: UVRevProject) -> tuple[Path, ...]:
+    """Bring the bytecode of the venv in sync with its sources.
 
-    Fixing reinstalls packages with missing or modified files,
-    syncs the venv with uv.lock and protects it (if enabled).
-    Untracked files are only reported.
-
-    uv hardlinks the files of a package from its cache, so a file changed in
-    the venv is changed in the cache as well (and in all venvs using it).
-    Reinstalling alone would link the changed file again, so the cache entries
-    of the affected packages are removed first.
-    See https://github.com/astral-sh/uv/issues/22979
-
-    Args:
-        project: Project to verify.
-        fix: Fix the problems.
+    Bytecode without source is removed. The rest is compiled (if the setting
+    ``compile_bytecode`` is enabled), as a protected venv can not cache it later.
+    Python only compiles files whose bytecode is missing or outdated.
 
     Returns:
-        The problems found and those remaining after fixing.
+        The removed files.
     """
-    problems = find_problems(project)
-    if not fix:
-        return VerifyResult(problems, problems)
+    removed = []
+    for path in venv_files(project):
+        source = bytecode_source(path)
+        if source is not None and not source.exists():
+            path.unlink()
+            removed.append(path)
+    python = project.interpreter
+    if project.settings.compile_bytecode and python is not None:
+        cmd = (str(python), "-m", "compileall", "-q", *map(str, project.site_packages))
+        show_cmd(cmd)
+        # files that can not be compiled (e.g. templates, code for another
+        # Python version) are reported by compileall, but are no failure
+        subprocess.run(cmd, stdout=STDERR_FD, check=False)
+    return tuple(removed)
 
-    reinstall = sorted(
-        {
-            problem.package
-            for problem in problems
-            if problem.kind in REINSTALL and problem.package
-        }
+
+def fix_problems(
+    project: UVRevProject, problems: tuple[Problem, ...]
+) -> tuple[tuple[NormalizedName, ...], tuple[Path, ...]]:
+    """Bring the venv into a valid state, the venv itself is kept.
+
+    - Untracked files are removed.
+    - Packages with missing or modified files are reinstalled in place.
+      uv hardlinks the files of a package from its cache, so a file changed in
+      the venv is changed in the cache as well (and in all venvs using it).
+      Reinstalling alone would link the changed file again, so the cache entries
+      of the affected packages are removed first.
+      See https://github.com/astral-sh/uv/issues/22979
+    - The venv is synced with uv.lock.
+    - The bytecode is brought in sync with the sources.
+    - The venv is protected (if enabled).
+
+    Returns:
+        The reinstalled packages and the removed files.
+    """
+    reinstall = tuple(
+        sorted(
+            {
+                problem.package
+                for problem in problems
+                if problem.kind in REINSTALL and problem.package
+            }
+        )
     )
-    if reinstall:
-        # --force: without it uv waits for other uv processes using the cache,
-        # e.g. forever if uvrev itself was started with uv run or uvx
-        uv("cache", "clean", "--force", *reinstall, project=project)
+    removed = []
     with writable_venv(project):
+        for problem in problems:
+            if problem.kind == "untracked":
+                problem.path.unlink(missing_ok=True)
+                removed.append(problem.path)
+        if reinstall:
+            # --force: without it uv waits for other uv processes using the cache,
+            # e.g. forever if uvrev itself was started with uv run or uvx
+            uv("cache", "clean", "--force", *reinstall, project=project)
         uv(
             "sync",
             "--frozen",
             *(f"--reinstall-package={package}" for package in reinstall),
             project=project,
         )
-    remaining = find_problems(project)
+        removed.extend(sync_bytecode(project))
+    return reinstall, tuple(removed)
+
+
+def verify(
+    project: UVRevProject,
+    fix: bool = False,
+    find: Callable[[UVRevProject], tuple[Problem, ...]] = find_problems,
+) -> VerifyResult:
+    """Verify the venv and optionally fix it.
+
+    Every file is compared with the hash in the RECORD of its package, so this
+    does not depend on timestamps. Fixing is described in ``fix_problems``.
+    If the venv is valid afterwards, it is no longer marked as unprotected.
+
+    Args:
+        project: Project to verify.
+        fix: Fix the problems.
+        find: Finds the problems of the venv.
+
+    Returns:
+        The problems found and those remaining after fixing.
+    """
+    problems = find(project)
+    if not fix:
+        return VerifyResult(problems, problems)
+
+    fix_problems(project, problems)
+    remaining = find(project)
+    if not remaining:
+        remove_marker(project.unprotected_marker_path)
     return VerifyResult(problems, remaining, fixed=remaining != problems)

@@ -1,6 +1,5 @@
-import os
 import shutil
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
@@ -42,26 +41,6 @@ def chmod(venv: Path, mode: str, command: str) -> None:
     run_cmd(command, "-R", mode, venv.name, cwd=venv.parent)
 
 
-def permissions(venv: Path) -> Mapping[Path, int]:
-    """The permissions of all files and directories of a venv.
-
-    Used to tell whether chmod changed anything, as the modes are settings and
-    can not be interpreted. Symlinks are skipped like chmod -R does.
-
-    Returns:
-        Mode of each path, empty if the venv does not exist.
-    """
-    if not venv.is_dir():
-        return {}
-    modes = {venv: venv.lstat().st_mode}
-    for directory, dirnames, filenames in os.walk(venv):
-        for name in (*dirnames, *filenames):
-            path = Path(directory, name)
-            if not path.is_symlink():
-                modes[path] = path.lstat().st_mode
-    return modes
-
-
 def protect_venv(venv: Path, settings: Settings) -> None:
     """Remove write permissions, so the venv can not be changed by accident"""
     chmod(venv, settings.protect_mode, settings.chmod_command)
@@ -78,6 +57,9 @@ def writable(venv: Path, settings: Settings) -> Iterator[None]:
 
     Afterwards the venv is always protected again, even if the block failed.
     The venv may be created, recreated or deleted within the block.
+
+    This is for changes made by uvrev itself. It never marks the environment
+    as unprotected (see ``marker.py``), and keeps an existing mark as it is.
     """
     if not settings.protect:
         yield
