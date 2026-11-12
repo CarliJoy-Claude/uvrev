@@ -1,3 +1,10 @@
+"""Compare two states of names with a value (packages, dependencies, Python).
+
+``Diff`` groups the names into added, updated, downgraded and removed,
+``create_changelog`` renders diffs as the text of a revision.
+Pure functions: the states are read and parsed elsewhere (``parser.py``).
+"""
+
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType

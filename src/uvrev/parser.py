@@ -1,3 +1,10 @@
+"""Parse the content of the files of an environment and the input of the user.
+
+Pure functions from text to values: dependencies of ``pyproject.toml``,
+packages of ``uv.lock``, the Python request and requirements given on the
+command line. No file is read and no command is run here.
+"""
+
 import os
 import tomllib
 from collections.abc import Mapping

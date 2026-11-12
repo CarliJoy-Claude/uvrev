@@ -1,3 +1,10 @@
+"""The settings of uvrev: their defaults, validation and where they come from.
+
+Loaded with typed-settings from the ``[uvrev]`` table of the config file, the
+files in ``UVREV_SETTINGS`` and ``UVREV_*`` environment variables.
+This module must not import ``commands`` (import cycle through ``types``).
+"""
+
 import json
 import re
 import subprocess

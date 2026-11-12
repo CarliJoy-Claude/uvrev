@@ -1,3 +1,10 @@
+"""Run the external commands uvrev is built on: ``uv``, ``git`` and others.
+
+The commands are shown before they run, their stdout goes to stderr (so
+uvrev's stdout stays parseable) and a failure becomes a ``SubprocessFailure``.
+What the commands are used for is decided by the callers.
+"""
+
 import os
 import shlex
 import shutil

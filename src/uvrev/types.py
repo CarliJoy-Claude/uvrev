@@ -1,3 +1,9 @@
+"""Basic types used by all modules: the project of an environment and its paths.
+
+``UVRevProject`` knows where the files of an environment are, not what is in
+them. Also home of ``Revision`` and ``SubprocessFailure``.
+"""
+
 import shlex
 import subprocess
 import tomllib

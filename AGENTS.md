@@ -46,6 +46,9 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   signatures and stored state. Mutate only local, short-lived objects.
 - Match the surrounding code: docstrings with Args/Returns/Examples, doctests
   for small pure functions.
+- Every module starts with a docstring that defines its scope: what belongs
+  in it and where related things are instead. A module that outgrows its
+  docstring is split.
 - stdout is reserved for results (e.g. the `--json` report). Logs, executed
   commands and the output of `uv`, `git` and `chmod` go to stderr.
   Only `uvrev run` and the tools of `uvrev tool run` write to stdout.

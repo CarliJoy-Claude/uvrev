@@ -1,3 +1,9 @@
+"""Read and write the files of an environment that uvrev edits itself.
+
+``pyproject.toml`` is edited with tomlkit, which keeps comments and formatting.
+Files that are only read are parsed in ``parser.py``.
+"""
+
 import tomlkit
 
 from .types import UVRevProject

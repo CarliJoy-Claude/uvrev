@@ -1,3 +1,12 @@
+"""Protect a venv against accidental changes by removing write permissions.
+
+``chmod`` makes the venv read-only or writable. ``writable()`` is for the
+changes uvrev makes itself: writable within the block, protected afterwards.
+
+Unprotecting for a hotfix by the user, and repairing afterwards, is in
+``repair.py`` and ``marker.py``.
+"""
+
 import shutil
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager

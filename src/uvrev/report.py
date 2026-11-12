@@ -1,3 +1,10 @@
+"""The JSON reports printed with ``--json`` and the data they are built from.
+
+The dataclasses define the schema (the field order is the order in the JSON),
+the README documents it. They only convert results into JSON compatible values:
+when a report is printed is decided in ``cli.py``.
+"""
+
 import json
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field

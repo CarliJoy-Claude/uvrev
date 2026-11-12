@@ -1,3 +1,5 @@
+"""Messages for the user (success, warning, error), always written to stderr."""
+
 import sys
 from typing import NoReturn
 

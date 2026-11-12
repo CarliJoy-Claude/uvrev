@@ -1,3 +1,14 @@
+"""The operations on an environment: create, change, sync, restore, history.
+
+Everything that changes the tracked files of an environment (``pyproject.toml``,
+``uv.lock``, ``.python-version``) and records it as a revision (a git commit
+and a ``rev_<n>`` tag) lives here, with the state comparison it needs.
+
+The functions take a ``UVRevProject`` and return what changed. They do not
+print reports or parse options (``cli.py``) and do not verify or repair the
+venv (``verify.py``, ``repair.py``).
+"""
+
 import contextlib
 import getpass
 import platform

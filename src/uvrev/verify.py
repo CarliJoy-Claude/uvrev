@@ -1,3 +1,11 @@
+"""Verify that a venv contains exactly what its packages installed, and fix it.
+
+A valid venv only contains the files in the ``RECORD`` of its packages (with
+the recorded hash), the files of the venv itself and bytecode of an existing
+source, and it is in sync with ``uv.lock``. Every file is hashed, so this does
+not depend on timestamps (the fast check by ctime is in ``repair.py``).
+"""
+
 import base64
 import csv
 import hashlib

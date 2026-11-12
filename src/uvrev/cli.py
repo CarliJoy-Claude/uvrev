@@ -1,3 +1,13 @@
+"""The command line interface: the click commands and how they report.
+
+Every command parses its options, calls the functions of the other modules and
+shows the result: messages on stderr, the JSON report (``--json``) on stdout.
+``ReportingCommand`` makes sure every failure is reported as well.
+
+Nothing here changes an environment itself, that is done by ``operations.py``,
+``repair.py``, ``verify.py`` and ``tool.py``.
+"""
+
 import json
 import os
 import sys

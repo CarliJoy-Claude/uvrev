@@ -1,3 +1,9 @@
+"""Exceptions of uvrev that are not raised by click itself.
+
+``ReportingCommand`` (``cli.py``) turns them into a message for the user.
+"""
+
+
 class RevisionNotFoundError(Exception): ...
 
 

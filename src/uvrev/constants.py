@@ -1,3 +1,8 @@
+"""Names shared by several modules: file names of an environment and defaults.
+
+Only plain values, this module imports nothing of uvrev.
+"""
+
 from typing import Final
 
 DEFAULT_ENV: Final[str] = "base"
