@@ -4,6 +4,37 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6] (2026-11-11)
+
+### Added
+
+- `uvrev upgrade --python REQUEST`: changes the Python and upgrades all (or the given) packages in one revision.
+- `--python` of `add` and `upgrade` and the argument of `upgrade-python` accept everything `uv python pin` accepts,
+  not only `major.minor`: a version (`3.14`, `3.14.1`), a range (`'>=3.13,<3.15'`), an implementation
+  (`cpython-3.14`, `pypy@3.11`) or the path of an interpreter. See the [README](README.md#python-version).
+  A relative path refers to the working directory and is pinned as absolute path.
+- JSON reports: new field `python_request` with the pinned Python request (the content of `.python-version`).
+  - Change reports: `old` and `new` request, `null` if it did not change (like `python`).
+  - `env create`: the pinned request.
+  - `upgrade`: `options` contains `python`.
+  - `schema_version` stays 2.
+
+### Changed
+
+- `add --python`, `upgrade --python` and `upgrade-python` behave the same: they pin the request with
+  `uv python pin` first and then run their uv command. `uv add` is no longer called with `--python`.
+- The revision message tells what happened to the interpreter, e.g.
+  `Upgraded Python: 3.13.9 → 3.14.1 (pinned 3.14)` or `Downgraded Python: ...`, compared by the interpreter versions.
+  It is `Pinned Python REQUEST` if only the request changed, and Python is not mentioned if nothing changed
+  (before: `Upgraded Python: 3.13 → 3.14` and `; pinned Python 3.14`).
+- `uvrev env create --json`: `python` is the exact version of the interpreter (e.g. `3.14.1`) instead of the pin,
+  which is now in `python_request`.
+- `uvrev env create --python REQUEST` pins the request as given (e.g. a range or the path of an interpreter).
+  Before, only the minor version of the interpreter found was pinned.
+- `uvrev env create --python` for an existing environment warns if the pinned request differs as text,
+  ignoring spaces (before: if the minor version differs).
+- `uvrev upgrade-python` no longer checks the request itself (exit code 2), uv does (exit code 1).
+
 ## [0.5] (2026-11-10)
 
 ### Added
@@ -182,6 +213,7 @@ First real release.
 - `uvrev history` shows the revisions and `uvrev restore` goes back to a previous one.
 - `uvrev path` shows the location of an environment.
 
+[0.6]: https://gitlab.com/Kound/uvrev/-/compare/0.5...0.6
 [0.5]: https://gitlab.com/Kound/uvrev/-/compare/0.4...0.5
 [0.4]: https://gitlab.com/Kound/uvrev/-/compare/0.3...0.4
 [0.3]: https://gitlab.com/Kound/uvrev/-/compare/0.2...0.3

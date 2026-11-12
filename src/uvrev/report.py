@@ -25,8 +25,11 @@ class RevisionChange:
     revision: Revision
     packages: Diff[Version] = field(default_factory=Diff)
     dependencies: Diff[SpecifierSet | None] = field(default_factory=Diff)
+    # exact version of the interpreter
     python: Diff[Version] = field(default_factory=Diff)
     environments: Diff[None] = field(default_factory=Diff)
+    # pinned Python request (.python-version)
+    python_request: Diff[str] = field(default_factory=Diff)
 
     @property
     def created(self) -> bool:
@@ -127,7 +130,10 @@ class Report:
     dependency_changes: Changes
     all_changed_dependencies: Names
     versions: Versions
+    # exact version of the interpreter, None if it did not change
     python: VersionChange | None
+    # pinned Python request (.python-version), None if it did not change
+    python_request: VersionChange | None
     environments: EnvironmentsChange | None
     # result of verifying the venv after the change, None if it did not run
     verify: VerifySummary | None
@@ -199,6 +205,9 @@ class Report:
                 dependencies=change.dependencies.versions(),
             ),
             python=change.python.versions().get(canonicalize_name("python")),
+            python_request=change.python_request.versions().get(
+                canonicalize_name("python")
+            ),
             environments=EnvironmentsChange.from_diff(change.environments),
             verify=VerifySummary.from_result(verify) if verify else None,
             error_message=error_message,
@@ -246,6 +255,7 @@ class Report:
             all_changed_dependencies=(),
             versions=Versions(packages={}, dependencies={}),
             python=None,
+            python_request=None,
             environments=None,
             verify=None,
             error_message=error_message,
@@ -282,6 +292,7 @@ class Report:
             "dependencies": {}
           },
           "python": null,
+          "python_request": null,
           "environments": null,
           "verify": null,
           "error_message": "boom"
@@ -312,7 +323,9 @@ class CommandReport:
 class EnvCreateReport(CommandReport):
     """Report of ``uvrev env create``
 
-    >>> report = EnvCreateReport(2, "success", "create", ("demo",), {}, True, "/envs/demo", "3.14", None)
+    >>> report = EnvCreateReport(
+    ...     2, "success", "create", ("demo",), {}, True, "/envs/demo", "3.14.1", "3.14", None
+    ... )
     >>> json.loads(report.to_json())["created"]
     True
     """
@@ -321,8 +334,10 @@ class EnvCreateReport(CommandReport):
     created: bool
     # path of the project of the environment
     path: str
-    # pinned Python version (major.minor), None if unknown
+    # exact version of the Python interpreter, None if unknown
     python: str | None
+    # pinned Python request (.python-version), None if unknown
+    python_request: str | None
     error_message: str | None
 
 

@@ -175,14 +175,49 @@ class TestPythonLock:
 
 
 class TestUpgradePython:
-    @pytest.mark.parametrize("version", ["3", "3.14.1", "py3.14", "3.14t"])
-    def test_invalid_version(self, project: UVRevProject, version: str) -> None:
-        result = invoke("upgrade-python", version)
+    def test_invalid_request(self, project: UVRevProject) -> None:
+        """uv decides what a valid request is, its failure is reported"""
+        result = invoke("upgrade-python", "nonsense", "--json")
 
-        assert result.exit_code == 2
-        assert "major.minor" in result.output
-        with pytest.raises(ValueError, match=r"major\.minor"):
-            operations.upgrade_python(project, version)
+        assert result.exit_code == 1
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert "uv python pin nonsense" in report["error_message"]
+        status = git("status", "--porcelain", project=project, capture_output=True)
+        assert status == ""
+
+    @pytest.mark.parametrize("kind", ["exact", "range", "implementation", "path"])
+    def test_other_requests(self, project: UVRevProject, kind: str) -> None:
+        """Everything uv python pin accepts works, not only major.minor
+
+        The requests resolve to the interpreter in use, so only the pin changes.
+        """
+        current = pinned(project)
+        major, minor = map(int, current.split("."))
+        exact = python_version(project)
+        interpreter = (project.venv_path / "bin" / "python").resolve()
+        request, stored = {
+            "exact": (exact, exact),
+            "range": (
+                f">={current},<{major}.{minor + 1}",
+                f">={current}, <{major}.{minor + 1}",
+            ),
+            "implementation": (f"cpython@{current}", f"cpython@{current}"),
+            "path": (str(interpreter), str(interpreter)),
+        }[kind]
+
+        result = invoke("upgrade-python", request, "--json")
+
+        assert result.exit_code == 0, result.output
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["arguments"] == [request]
+        assert report["revision"] == 1
+        # the request as stored by uv, the interpreter is the same
+        assert report["python_request"] == {"old": current, "new": stored}
+        assert report["python"] is None
+        assert pinned(project) == stored
+        assert python_version(project) == exact
+        subject = last_commit_message(project).splitlines()[0]
+        assert subject == f"(rev 1) Pinned Python {request}"
 
     def test_same_version(self, project: UVRevProject) -> None:
         result = invoke("upgrade-python", pinned(project), "--json")
@@ -192,6 +227,7 @@ class TestUpgradePython:
         report: dict[str, Any] = json.loads(result.stdout)
         assert report["revision"] == report["previous_revision"] == 0
         assert report["python"] is None
+        assert report["python_request"] is None
 
     def test_changed_pin(self, project: UVRevProject) -> None:
         """A revision is created if the pinned version changes"""
@@ -203,7 +239,8 @@ class TestUpgradePython:
 
         assert result.exit_code == 0, result.output
         assert f"Changed Python to {current}" in result.output
-        assert f"Upgraded Python: 3.11 → {current}" in (last_commit_message(project))
+        # the interpreter of the venv is the same, only the pin changed
+        assert f"Pinned Python {current}" in last_commit_message(project)
 
     def test_missing_python_version_file(self, project: UVRevProject) -> None:
         current = pinned(project)
@@ -272,12 +309,16 @@ class TestUpgradePython:
         assert new_python.startswith(f"{version}.")
         assert report["revision"] == 1
         assert report["python"] == {"old": old_python, "new": new_python}
+        assert report["python_request"] == {"old": old_pinned, "new": version}
         assert project.python_version_path.read_text() == f"{version}\n"
         # requires-python is not changed
         pyproject: Any = read_pyproject(project)
         assert pyproject["project"]["requires-python"] == requires_python
         message = last_commit_message(project)
-        assert f"Python: {old_pinned} → {version}" in message
+        assert (
+            f"Upgraded Python: {old_python} → {new_python} (pinned {version})"
+            in message
+        )
         assert f"python=={old_python} → python=={new_python}" in message
 
         # the requested Python version is restored as well
@@ -295,6 +336,10 @@ class TestUpgradePython:
         result = invoke("upgrade-python", "-e", "two", old_pinned)
         assert result.exit_code == 0, result.output
         assert python_version(project) == old_python
+        assert (
+            f"Downgraded Python: {new_python} → {old_python} (pinned {old_pinned})"
+            in last_commit_message(project)
+        )
 
     def test_below_requires_python(self, fake_basedir: Path) -> None:
         """uv python pin refuses versions not matching requires-python"""
@@ -319,8 +364,10 @@ class TestAddPython:
         result = invoke("add", "--python", current, "peppercorn", "--json")
 
         assert result.exit_code == 0, result.output
-        assert f"uv add --raw --python {current} 'peppercorn>=0'" in result.stderr
-        assert f"uv python pin {current}" in result.stderr
+        # the request is pinned first, uv add then uses the pin
+        pin = result.stderr.index(f"uv python pin {current}")
+        assert pin < result.stderr.index("uv add --raw 'peppercorn>=0'")
+        assert "uv add --raw --python" not in result.stderr
         report: dict[str, Any] = json.loads(result.stdout)
         assert report["options"] == {
             "upgrade_all": False,
@@ -328,10 +375,14 @@ class TestAddPython:
             "dry_run": False,
         }
         assert report["python"] is None
+        assert report["python_request"] is None
         assert pinned(project) == current
+        # nothing changed for Python, so the message does not mention it
+        subject = last_commit_message(project).splitlines()[0]
+        assert subject == "(rev 1) Added: peppercorn"
 
     def test_add_with_python(self, fake_basedir: Path) -> None:
-        """uv add --python installs the version, uv python pin pins it"""
+        """uv python pin pins the version, uv add installs it"""
         old, new = two_pythons()
         project = operations.create_env(fake_basedir, "two", old)
         old_python = python_version(project)
@@ -340,7 +391,6 @@ class TestAddPython:
         result = invoke("add", "-e", "two", "--python", new, "peppercorn", "--json")
 
         assert result.exit_code == 0, result.output
-        assert "uv add --raw --python" in result.stderr
         assert f"uv python pin {new}" in result.stderr
         report: dict[str, Any] = json.loads(result.stdout)
         assert report["options"] == {
@@ -353,7 +403,11 @@ class TestAddPython:
         assert pinned(project) == new
         pyproject: Any = read_pyproject(project)
         assert pyproject["project"]["requires-python"] == requires_python
-        assert f"pinned Python {new}" in last_commit_message(project)
+        subject = last_commit_message(project).splitlines()[0]
+        assert subject == (
+            "(rev 1) Added: peppercorn; "
+            f"Upgraded Python: {old_python} → {python_version(project)} (pinned {new})"
+        )
 
     def test_add_with_python_below_requires_python(self, fake_basedir: Path) -> None:
         """uv refuses the version, the files are not changed"""
@@ -366,3 +420,204 @@ class TestAddPython:
         assert pinned(project) == new
         status = git("status", "--porcelain", project=project, capture_output=True)
         assert status == ""
+
+
+class TestUpgradeWithPython:
+    """uvrev upgrade --python pins like add --python and upgrade-python"""
+
+    def test_same_python(self, upgradeable_project: UVRevProject) -> None:
+        """Works with a single installed Python as well"""
+        current = pinned(upgradeable_project)
+
+        result = invoke("upgrade", "--python", current, "--json")
+
+        assert result.exit_code == 0, result.output
+        pin = result.stderr.index(f"uv python pin {current}")
+        assert pin < result.stderr.index("uv sync --upgrade")
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["options"] == {"python": current, "dry_run": False}
+        assert report["changes"]["updated"] == ["peppercorn", "sampleproject"]
+        assert report["python"] is None
+        assert report["python_request"] is None
+        subject = last_commit_message(upgradeable_project).splitlines()[0]
+        assert subject == "(rev 2) Upgraded all packages"
+
+    def test_package_and_request(self, upgradeable_project: UVRevProject) -> None:
+        exact = python_version(upgradeable_project)
+
+        result = invoke("upgrade", "peppercorn", "--python", exact, "--json")
+
+        assert result.exit_code == 0, result.output
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["arguments"] == ["peppercorn"]
+        assert report["all_changed_packages"] == ["peppercorn"]
+        assert report["python_request"]["new"] == exact
+        subject = last_commit_message(upgradeable_project).splitlines()[0]
+        assert subject == f"(rev 2) Upgraded: peppercorn; Pinned Python {exact}"
+
+    def test_dry_run(self, upgradeable_project: UVRevProject) -> None:
+        current = pinned(upgradeable_project)
+        exact = python_version(upgradeable_project)
+
+        result = invoke("upgrade", "--python", exact, "--dry-run", "--json")
+
+        assert result.exit_code == 0, result.output
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["options"] == {"python": exact, "dry_run": True}
+        assert report["python_request"] == {"old": current, "new": exact}
+        assert report["changes"]["updated"] == ["peppercorn", "sampleproject"]
+        assert report["revision"] == report["previous_revision"] == 1
+        # nothing was changed
+        assert pinned(upgradeable_project) == current
+        status = git(
+            "status", "--porcelain", project=upgradeable_project, capture_output=True
+        )
+        assert status == ""
+
+    def test_invalid_request(self, upgradeable_project: UVRevProject) -> None:
+        current = pinned(upgradeable_project)
+
+        result = invoke("upgrade", "--python", "nonsense")
+
+        assert result.exit_code == 1
+        assert pinned(upgradeable_project) == current
+        status = git(
+            "status", "--porcelain", project=upgradeable_project, capture_output=True
+        )
+        assert status == ""
+
+    def test_other_python(self, fake_basedir: Path) -> None:
+        old, new = two_pythons()
+        project = operations.create_env(fake_basedir, "two", old)
+        old_python = python_version(project)
+
+        result = invoke("upgrade", "-e", "two", "--python", new, "--json")
+
+        assert result.exit_code == 0, result.output
+        report: dict[str, Any] = json.loads(result.stdout)
+        new_python = python_version(project)
+        assert report["python"] == {"old": old_python, "new": new_python}
+        assert report["python_request"] == {"old": old, "new": new}
+        subject = last_commit_message(project).splitlines()[0]
+        assert subject == (
+            "(rev 1) Upgraded all packages; "
+            f"Upgraded Python: {old_python} → {new_python} (pinned {new})"
+        )
+
+
+def real_interpreter(project: UVRevProject) -> Path:
+    """The interpreter the venv of the project links to"""
+    return (project.venv_path / "bin" / "python").resolve()
+
+
+class TestInterpreterPath:
+    """A Python request can be the path of an interpreter"""
+
+    def test_relative_path(
+        self, project: UVRevProject, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A relative path refers to the working directory, not to the environment"""
+        interpreter = real_interpreter(project)
+        exact = python_version(project)
+        monkeypatch.chdir(interpreter.parent)
+
+        result = invoke("upgrade-python", f"./{interpreter.name}", "--json")
+
+        assert result.exit_code == 0, result.output
+        assert f"uv python pin {interpreter}" in result.stderr
+        report: dict[str, Any] = json.loads(result.stdout)
+        # the absolute path is pinned and reported
+        assert report["arguments"] == [str(interpreter)]
+        assert report["python_request"]["new"] == str(interpreter)
+        assert report["python"] is None
+        assert pinned(project) == str(interpreter)
+        assert python_version(project) == exact
+
+    def test_relative_path_dry_run(
+        self, project: UVRevProject, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The dry run happens in a temporary folder, the path is still found"""
+        interpreter = real_interpreter(project)
+        current = pinned(project)
+        monkeypatch.chdir(interpreter.parent.parent)
+        relative = f"{interpreter.parent.name}/{interpreter.name}"
+
+        result = invoke("upgrade", "--python", relative, "--dry-run", "--json")
+
+        assert result.exit_code == 0, result.output
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["options"] == {"python": str(interpreter), "dry_run": True}
+        assert report["python_request"] == {"old": current, "new": str(interpreter)}
+        assert pinned(project) == current
+
+    def test_add_with_path(self, project: UVRevProject) -> None:
+        interpreter = real_interpreter(project)
+
+        result = invoke("add", "--python", str(interpreter), "peppercorn", "--json")
+
+        assert result.exit_code == 0, result.output
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["python_request"]["new"] == str(interpreter)
+        assert pinned(project) == str(interpreter)
+        subject = last_commit_message(project).splitlines()[0]
+        assert subject == f"(rev 1) Added: peppercorn; Pinned Python {interpreter}"
+
+    @pytest.mark.parametrize("kind", ["missing", "empty_folder"])
+    def test_wrong_path(self, project: UVRevProject, kind: str, tmp_path: Path) -> None:
+        """uv pins a wrong path, but fails to use it: the files are reset
+
+        (A folder is a valid request for uv, if it contains bin/python.)
+        """
+        current = pinned(project)
+        folder = tmp_path / "no-python"
+        folder.mkdir()
+        path = folder / "python" if kind == "missing" else folder
+
+        result = invoke("upgrade-python", str(path), "--json")
+
+        assert result.exit_code == 1
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["status"] == "error"
+        assert pinned(project) == current
+        status = git("status", "--porcelain", project=project, capture_output=True)
+        assert status == ""
+
+    def test_env_create_pins_path(
+        self, project: UVRevProject, fake_basedir: Path
+    ) -> None:
+        """env create pins the path itself, not only the minor version"""
+        interpreter = real_interpreter(project)
+
+        result = invoke(
+            "env", "create", "byPath", "--python", str(interpreter), "--json"
+        )
+
+        assert result.exit_code == 0, result.output
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["python_request"] == str(interpreter)
+        assert report["python"] == python_version(project)
+        created = UVRevProject(fake_basedir / "byPath")
+        assert pinned(created) == str(interpreter)
+        status = git("status", "--porcelain", project=created, capture_output=True)
+        assert status == ""
+
+        # the same request again is no reason for a warning
+        result = invoke("env", "create", "byPath", "--python", str(interpreter))
+        assert result.exit_code == 0
+        assert "is ignored" not in result.stderr
+
+    def test_env_create_pins_range(
+        self, project: UVRevProject, fake_basedir: Path
+    ) -> None:
+        """A range is pinned as given, uv stores it with spaces"""
+        major, minor = map(int, pinned(project).split("."))
+        request = f">={major}.{minor},<{major}.{minor + 1}"
+
+        result = invoke("env", "create", "byRange", "--python", request, "--json")
+
+        assert result.exit_code == 0, result.output
+        report: dict[str, Any] = json.loads(result.stdout)
+        assert report["python_request"] == f">={major}.{minor}, <{major}.{minor + 1}"
+
+        result = invoke("env", "create", "byRange", "--python", request)
+        assert "is ignored" not in result.stderr

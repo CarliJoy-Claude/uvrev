@@ -10,7 +10,7 @@ from click.testing import CliRunner, Result
 from conftest import Invoker
 
 from uvrev import constants
-from uvrev.cli import Services, cli, python_minor
+from uvrev.cli import Services, cli
 from uvrev.protection import permissions, unprotect
 from uvrev.settings import load_settings
 from uvrev.types import UVRevProject
@@ -41,6 +41,7 @@ class TestEnvCreate:
 
         project = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
         pinned = project.python_version_path.read_text().strip()
+        exact = project.python_lock_path.read_text().strip()
         assert report(result) == {
             "schema_version": 2,
             "status": "success",
@@ -49,15 +50,18 @@ class TestEnvCreate:
             "options": {"python": None, "force": False},
             "created": True,
             "path": str(project.project_path),
-            "python": pinned,
+            # the exact version of the interpreter and the pinned request
+            "python": exact,
+            "python_request": pinned,
             "error_message": None,
         }
+        assert exact.startswith(f"{pinned}.")
         assert "uv init" in result.stderr
 
     def test_existing(self, invoke: Invoker, fake_basedir: Path) -> None:
         """created is false and --python is not applied, but reported"""
         first = report(invoke("env", "create", "demo", "--json"))
-        pinned = first["python"]
+        pinned = first["python_request"]
 
         result = invoke("env", "create", "demo", "--python", "3.99", "--json")
 
@@ -65,22 +69,29 @@ class TestEnvCreate:
         assert data["arguments"] == ["demo"]
         assert data["options"] == {"python": "3.99", "force": False}
         assert data["created"] is False
-        assert data["python"] == pinned
+        assert data["python_request"] == pinned
+        assert data["python"] == first["python"]
         assert data["path"] == first["path"]
-        assert f"uses Python {pinned}, --python 3.99 is ignored" in result.stderr
+        assert f"has Python {pinned} pinned, --python 3.99 is ignored" in result.stderr
         assert "uvrev upgrade-python 3.99" in result.stderr
 
-    @pytest.mark.parametrize("suffix", ["", ".0"])
-    def test_existing_same_python(
-        self, suffix: str, invoke: Invoker, fake_basedir: Path
-    ) -> None:
-        """No warning if the requested version is the pinned one"""
-        pinned = report(invoke("env", "create", "--json"))["python"]
+    def test_existing_same_request(self, invoke: Invoker, fake_basedir: Path) -> None:
+        """No warning if the request is the pinned one"""
+        pinned = report(invoke("env", "create", "--json"))["python_request"]
 
-        result = invoke("env", "create", "--python", pinned + suffix)
+        result = invoke("env", "create", "--python", pinned)
 
         assert result.exit_code == 0
         assert "is ignored" not in result.stderr
+
+    def test_existing_other_request(self, invoke: Invoker, fake_basedir: Path) -> None:
+        """Only the pinned request is compared, not what it resolves to"""
+        first = report(invoke("env", "create", "--json"))
+
+        result = invoke("env", "create", "--python", first["python"])
+
+        assert result.exit_code == 0
+        assert f"--python {first['python']} is ignored" in result.stderr
 
     def test_failure(self, invoke: Invoker, fake_basedir: Path) -> None:
         """A folder that is no complete environment still fails without --force"""
@@ -90,13 +101,9 @@ class TestEnvCreate:
 
         assert data["created"] is False
         assert data["python"] is None
+        assert data["python_request"] is None
         assert data["path"] == str(fake_basedir / "broken")
         assert "already exists" in data["error_message"]
-
-    def test_python_minor(self) -> None:
-        assert python_minor("3.12.4") == "3.12"
-        assert python_minor("pypy") is None
-        assert python_minor(None) is None
 
 
 class TestProtect:

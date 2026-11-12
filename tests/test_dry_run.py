@@ -61,7 +61,7 @@ class TestUpgrade:
         result = invoke("upgrade", "--dry-run", "--json")
 
         data = report(result)
-        assert data["options"] == {"dry_run": True}
+        assert data["options"] == {"python": None, "dry_run": True}
         assert data["changes"]["updated"] == ["peppercorn", "sampleproject"]
         assert data["versions"]["packages"]["sampleproject"]["old"] == "3.0.0"
         assert data["versions"]["packages"]["sampleproject"]["new"] != "3.0.0"
@@ -75,7 +75,7 @@ class TestUpgrade:
 
         # the real command changes exactly that
         real = json.loads(invoke("upgrade", "--json").stdout)
-        assert real["options"] == {"dry_run": False}
+        assert real["options"] == {"python": None, "dry_run": False}
         assert real["revision"] == 2
         for field in ("changes", "versions", "dependency_changes"):
             assert real[field] == data[field]
