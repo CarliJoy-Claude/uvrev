@@ -74,7 +74,9 @@ class ProblemEntry:
     kind: str
     path: str
     package: str | None
-    is_warning: bool
+    # always False: kept for the consumers of the report, there are no
+    # problems anymore that are only reported
+    is_warning: bool = False
 
     @classmethod
     def from_problem(cls, problem: Problem) -> Self:
@@ -82,7 +84,6 @@ class ProblemEntry:
             kind=problem.kind,
             path=str(problem.path),
             package=problem.package,
-            is_warning=problem.is_warning,
         )
 
 

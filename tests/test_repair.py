@@ -502,7 +502,7 @@ class TestCli:
 
         result = verify(unprotected, fix=True, find=unfixable)
 
-        assert result.errors
+        assert result.remaining
         assert marker(unprotected) == mark
 
     def test_verify_keeps_mark(self, invoke: Invoker, project: UVRevProject) -> None:

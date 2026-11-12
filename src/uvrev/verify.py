@@ -22,9 +22,6 @@ type ProblemKind = Literal["missing", "modified", "not_synced", "untracked"]
 
 # Problems fixed by reinstalling the package
 REINSTALL: Final[frozenset[ProblemKind]] = frozenset({"missing", "modified"})
-# Problems that are only reported. There is none anymore: a valid venv only
-# contains the files of its packages, so untracked files are removed.
-WARNINGS: Final[frozenset[ProblemKind]] = frozenset()
 
 # The files a venv consists of itself, they are not installed by a package and
 # can not be verified or restored (only by creating the venv again).
@@ -83,10 +80,6 @@ class Problem:
         """
         package = f" ({self.package})" if self.package else ""
         return f"{self.path}{package}: {DESCRIPTIONS[self.kind]}"
-
-    @property
-    def is_warning(self) -> bool:
-        return self.kind in WARNINGS
 
 
 def file_hash(path: Path, algorithm: str) -> str:
@@ -250,17 +243,6 @@ class VerifyResult:
     remaining: tuple[Problem, ...] = ()
     # True if fixing repaired at least one problem
     fixed: bool = False
-
-    @property
-    def errors(self) -> tuple[Problem, ...]:
-        """The remaining problems that are no warnings
-
-        >>> untracked = Problem("untracked", Path("a.py"))
-        >>> modified = Problem("modified", Path("b.py"))
-        >>> VerifyResult((untracked, modified), (modified,)).errors == (modified,)
-        True
-        """
-        return tuple(problem for problem in self.remaining if not problem.is_warning)
 
 
 def find_problems(project: UVRevProject) -> tuple[Problem, ...]:

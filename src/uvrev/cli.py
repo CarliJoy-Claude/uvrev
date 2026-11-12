@@ -371,11 +371,7 @@ def dry_run_option[F: Callable[..., Any]](f: F) -> F:
 
 def echo_problems(problems: tuple[Problem, ...], err: bool = False) -> None:
     for problem in problems:
-        click.secho(
-            f"{'⚠️' if problem.is_warning else '❌'} {problem}",
-            fg="yellow" if problem.is_warning else "red",
-            err=err,
-        )
+        click.secho(f"❌ {problem}", fg="red", err=err)
 
 
 def run_operation(
@@ -416,8 +412,8 @@ def run_operation(
     if result is not None:
         # stdout may contain the JSON report
         echo_problems(result.remaining, err=True)
-        if result.errors:
-            message = f"{len(result.errors)} problem(s) could not be fixed"
+        if result.remaining:
+            message = f"{len(result.remaining)} problem(s) could not be fixed"
     if as_json:
         report = Report.from_change(
             report_command(ctx),
@@ -1006,22 +1002,23 @@ def verify_cmd(
 ) -> None:
     """Check the venv against the RECORD files of the installed packages
 
-    Finds missing or modified files, untracked files and packages not in sync
-    with uv.lock. With --fix the affected packages are removed from the uv
-    cache and reinstalled, and the venv is protected again (if enabled).
-    Untracked files are only reported.
+    Finds missing or modified files, files that no package installed and
+    packages not in sync with uv.lock. With --fix the affected packages are
+    removed from the uv cache and reinstalled, files that no package installed
+    are removed, and the venv is protected again (if enabled).
 
-    The exit code is 1 if problems remain (warnings don't count).
+    The exit code is 1 if problems remain.
     """
     result = get_services(ctx).verify(project, fix)
     # stdout is reserved for the report
     echo_problems(result.remaining, err=as_json)
     message = None
-    if result.errors and fix:
-        message = f"{len(result.errors)} problem(s) could not be fixed"
-    elif result.errors:
+    if result.remaining and fix:
+        message = f"{len(result.remaining)} problem(s) could not be fixed"
+    elif result.remaining:
         message = (
-            f"{len(result.errors)} problem(s) found, fix them with 'uvrev verify --fix'"
+            f"{len(result.remaining)} problem(s) found, "
+            "fix them with 'uvrev verify --fix'"
         )
     if as_json:
         click.echo(verify_report(ctx, result, message).to_json())
