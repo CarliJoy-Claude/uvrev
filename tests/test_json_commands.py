@@ -11,7 +11,7 @@ from conftest import Invoker
 
 from uvrev import constants
 from uvrev.cli import Services, cli
-from uvrev.protection import permissions, unprotect
+from uvrev.protection import unprotect
 from uvrev.settings import load_settings
 from uvrev.types import UVRevProject
 from uvrev.verify import Problem, VerifyResult
@@ -110,27 +110,39 @@ class TestProtect:
     def test_changed(self, invoke: Invoker, synced_project: UVRevProject) -> None:
         venv = str(synced_project.venv_path)
 
-        # the venv is protected after every change
+        # the venv is protected after every change: nothing to do
         data = report(invoke("protect", "--json"))
         assert data["command"] == "protect"
         assert (data["changed"], data["protected"], data["path"]) == (False, True, venv)
+        assert (data["state"], data["repair"]) == (None, None)
 
         data = report(invoke("unprotect", "--json"))
         assert (data["changed"], data["protected"], data["path"]) == (True, False, venv)
+        assert (data["state"], data["repair"]) == ("post-chmod", None)
 
+        # already unprotected
         data = report(invoke("unprotect", "--json"))
         assert (data["changed"], data["protected"]) == (False, False)
+        assert data["state"] == "post-chmod"
+
+        # nothing was changed in the meantime, so nothing is repaired
+        data = report(invoke("protect", "--json"))
+        assert (data["changed"], data["protected"], data["state"]) == (True, True, None)
+        assert data["repair"] == {"mode": "fast", "packages": [], "removed_files": []}
+
+    def test_repair(self, invoke: Invoker, synced_project: UVRevProject) -> None:
+        report(invoke("unprotect", "--json"))
+        module(synced_project).write_text("print('hotfix')")
+        extra = synced_project.site_packages[0] / "extra.py"
+        extra.write_text("")
 
         data = report(invoke("protect", "--json"))
-        assert (data["changed"], data["protected"]) == (True, True)
 
-    def test_one_file_changed(
-        self, invoke: Invoker, synced_project: UVRevProject
-    ) -> None:
-        """A single writable file is found"""
-        module(synced_project).chmod(0o644)
-
-        assert report(invoke("protect", "--json"))["changed"] is True
+        assert data["repair"] == {
+            "mode": "fast",
+            "packages": ["sampleproject"],
+            "removed_files": [str(extra)],
+        }
 
     def test_failure(
         self,
@@ -144,17 +156,8 @@ class TestProtect:
 
         assert data["changed"] is False
         assert data["protected"] is None
+        assert (data["state"], data["repair"]) == (None, None)
         assert "command was not found" in data["error_message"]
-
-    def test_permissions(self, tmp_path: Path) -> None:
-        """Symlinks are skipped, a missing venv has no permissions"""
-        assert permissions(tmp_path / "missing") == {}
-        venv = tmp_path / ".venv"
-        venv.mkdir()
-        (venv / "file").touch()
-        (venv / "link").symlink_to(tmp_path)
-
-        assert set(permissions(venv)) == {venv, venv / "file"}
 
 
 class TestVerify:
@@ -201,8 +204,8 @@ class TestVerify:
         assert data["problems"] == []
         assert data["fixed"] is False
 
-    def test_warning(self, invoke: Invoker, synced_project: UVRevProject) -> None:
-        """Warnings are reported, but are no failure"""
+    def test_untracked(self, invoke: Invoker, synced_project: UVRevProject) -> None:
+        """A file that no package installed is removed by --fix"""
         unprotect(synced_project)
         extra = synced_project.site_packages[0] / "extra.py"
         extra.write_text("")
@@ -213,10 +216,12 @@ class TestVerify:
             "kind": "untracked",
             "path": str(extra),
             "package": None,
-            "is_warning": True,
+            "is_warning": False,
         }
-        assert data["problems"] == data["remaining_problems"] == [untracked]
-        assert data["fixed"] is False
+        assert data["problems"] == [untracked]
+        assert data["remaining_problems"] == []
+        assert data["fixed"] is True
+        assert not extra.exists()
 
     def test_not_fixable(self, synced_project: UVRevProject) -> None:
         def unfixable(project: UVRevProject, fix: bool) -> VerifyResult:

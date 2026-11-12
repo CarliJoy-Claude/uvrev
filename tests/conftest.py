@@ -132,3 +132,9 @@ def upgradeable_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
     shutil.copytree(data_dir / "upgradeable", proj.project_path, dirs_exist_ok=True)
     operations.create_revision(proj, "Add sampleproject")
     return proj
+
+
+def permissions(venv: Path) -> dict[Path, int]:
+    """The mode of all files and folders of a venv (links are skipped)"""
+    paths = (venv, *venv.rglob("*")) if venv.is_dir() else ()
+    return {path: path.lstat().st_mode for path in paths if not path.is_symlink()}

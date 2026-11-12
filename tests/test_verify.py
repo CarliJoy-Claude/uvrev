@@ -79,15 +79,23 @@ class TestFindProblems:
         unprotect(synced_project)
         extra = synced_project.site_packages[0] / "sample" / "extra.py"
         extra.write_text("")
-        # bytecode is not part of RECORD and ignored
+        # bytecode is not part of RECORD: allowed if its source exists
         pycache = synced_project.site_packages[0] / "sample" / "__pycache__"
         pycache.mkdir(exist_ok=True)
         (pycache / "extra.cpython-312.pyc").write_bytes(b"")
+        orphan = pycache / "gone.cpython-312.pyc"
+        orphan.write_bytes(b"")
+        # the whole venv is checked, not only site-packages
+        script = synced_project.venv_path / "bin" / "my-script"
+        script.write_text("")
 
         problems = find_problems(synced_project)
 
-        assert kinds(problems) == {("untracked", None)}
-        assert Problem("untracked", extra) in problems
+        assert set(problems) == {
+            Problem("untracked", extra),
+            Problem("untracked", orphan),
+            Problem("untracked", script),
+        }
 
     def test_not_synced(self, synced_project: UVRevProject) -> None:
         unprotect(synced_project)
@@ -143,9 +151,9 @@ class TestVerifyFix:
 
         result = verify(synced_project, fix=True)
 
-        # only the untracked file is left, it may be someone's work
-        assert result.remaining == (Problem("untracked", extra),)
-        assert result.errors == ()
+        # the venv is valid again, the untracked file is removed
+        assert result.remaining == ()
+        assert not extra.exists()
         assert result.fixed
         assert Problem("modified", module(synced_project), SAMPLE) in result.problems
         assert "changed" not in module(synced_project).read_text()
@@ -176,16 +184,20 @@ class TestCli:
         assert "simple.py (sampleproject): missing" in result.output
         assert "uvrev verify --fix" in result.output
 
-    def test_warning_only(self, invoke: Invoker, synced_project: UVRevProject) -> None:
-        """Untracked files are reported, but are no error"""
+    def test_untracked(self, invoke: Invoker, synced_project: UVRevProject) -> None:
+        """A file that no package installed makes the venv invalid, --fix removes it"""
         unprotect(synced_project)
-        (synced_project.site_packages[0] / "extra.py").write_text("")
-        invoke("protect")
+        extra = synced_project.site_packages[0] / "extra.py"
+        extra.write_text("")
 
         result = invoke("verify")
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "extra.py: not installed by any package" in result.output
+
+        assert invoke("verify", "--fix").exit_code == 0
+        assert not extra.exists()
+        assert writable_paths(synced_project.venv_path) == ()
 
     def test_fix(self, invoke: Invoker, synced_project: UVRevProject) -> None:
         unprotect(synced_project)

@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `uvrev unprotect` is made for hotfixes: it is fast (nothing is checked), can not be interrupted with Ctrl+C
+  and marks the environment with `.unprotected`, which contains the time when the `.venv` became writable.
+  See the [README](README.md#hotfixes-unprotect-and-protect).
+- Repair of an unprotected environment by `uvrev protect` and by every command that changes the environment:
+  packages with files changed since `unprotect` (by their ctime) are removed from the uv cache and reinstalled,
+  files that no package installed are removed, the bytecode is brought in sync. The `.venv` and the cache are kept.
+  - If the time of unprotecting is unknown, every file is compared with its hash instead.
+  - If a file of the virtual environment itself was changed, the repair fails and asks for `uvrev sync --clean`.
+- `uvrev sync --clean`: deletes the complete uv cache and the `.venv` and installs everything again.
+- JSON reports (`schema_version` stays 2):
+  - change reports and `protect`: `repair` (`mode`, `packages`, `removed_files`), `null` if nothing was repaired.
+  - `unprotect`: `state` (`post-chmod` or `forced`).
+  - `sync`: `options` contains `clean`.
+
+### Changed
+
+- `uvrev verify` checks the whole `.venv`, not only `site-packages`. Files that no package installed are
+  problems instead of warnings (exit code 1), and `uvrev verify --fix` removes them.
+  Bytecode without source is removed, the rest is compiled again.
+- `uvrev unprotect` for an environment that is unprotected already does nothing.
+- `uvrev protect --json` and `uvrev unprotect --json`: `changed` tells whether the environment was marked as
+  unprotected, the permissions are no longer inspected.
+- `uvrev run` neither syncs nor protects an environment that is unprotected.
+- `uvrev unprotect` warns if there are several environments, as they share the files of their packages.
+
 ## [0.6] (2026-11-11)
 
 ### Added
@@ -213,6 +242,7 @@ First real release.
 - `uvrev history` shows the revisions and `uvrev restore` goes back to a previous one.
 - `uvrev path` shows the location of an environment.
 
+[Unreleased]: https://gitlab.com/Kound/uvrev/-/compare/0.6...main
 [0.6]: https://gitlab.com/Kound/uvrev/-/compare/0.5...0.6
 [0.5]: https://gitlab.com/Kound/uvrev/-/compare/0.4...0.5
 [0.4]: https://gitlab.com/Kound/uvrev/-/compare/0.3...0.4

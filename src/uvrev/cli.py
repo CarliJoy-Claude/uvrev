@@ -14,6 +14,7 @@ from uvrev.exceptions import RevisionNotFoundError, ToolError
 
 from . import constants, settings as uvrev_settings
 from .commands import uv
+from .marker import read_marker
 from .operations import (
     add_packages,
     changelog_of,
@@ -33,17 +34,14 @@ from .operations import (
     upgrade_python,
 )
 from .parser import absolute_python_request, same_python_request
-from .protection import (
-    permissions,
-    protect as protect_venv,
-    unprotect as unprotect_venv,
-    writable_venv,
-)
+from .protection import protect as protect_venv, writable_venv
+from .repair import RepairResult, mark_unprotected, repair
 from .report import (
     SCHEMA_VERSION,
     EnvCreateReport,
     Option,
     ProtectReport,
+    RepairSummary,
     Report,
     RevisionChange,
     VerifyReport,
@@ -386,8 +384,13 @@ def run_operation(
     verify_after: bool | None,
     operation: Callable[[], RevisionChange],
     dry_run: bool = False,
+    repair_first: bool = True,
 ) -> RevisionChange:
     """Run an operation that changes an environment.
+
+    An environment that is marked as unprotected (``uvrev unprotect``) is
+    repaired first, unless the operation creates the venv anew anyway
+    (``repair_first``) or nothing may be changed (``dry_run``).
 
     Afterwards the venv is verified and fixed, if requested (``--verify`` or the
     setting ``verify_after_change``), and the JSON report is printed with --json.
@@ -399,6 +402,7 @@ def run_operation(
     In a dry run the operation only predicts the change: the venv is not
     verified and the changelog of the change is shown instead.
     """
+    repaired = repair(project) if repair_first and not dry_run else None
     change = operation()
     ctx = click.get_current_context()
     if dry_run:
@@ -422,6 +426,7 @@ def run_operation(
             report_options(ctx),
             result,
             message,
+            repaired,
         )
         click.echo(report.to_json())
     if message:
@@ -672,16 +677,35 @@ def remove(
         success("Nothing to remove.")
 
 
-@cli.command(error_report=change_error_report)
+@cli.command(error_report=change_error_report, report_options=("clean",))
+@click.option(
+    "--clean",
+    is_flag=True,
+    default=False,
+    help="Start anew: delete the complete uv cache and the virtual environment "
+    "first. Everything is downloaded again, running processes lose their files.",
+)
 @env_option
 @json_option
 @verify_option
-def sync(project: UVRevProject, as_json: bool, verify_after: bool | None) -> None:
+def sync(
+    project: UVRevProject, clean: bool, as_json: bool, verify_after: bool | None
+) -> None:
     """Sync project dependencies
 
     With --json the changes of the installed packages are reported.
+
+    --clean is the way out if an environment can not be repaired: it deletes
+    the cache of uv (all of it) and the virtual environment and installs
+    everything again.
     """
-    run_operation(project, as_json, verify_after, lambda: sync_packages(project))
+    run_operation(
+        project,
+        as_json,
+        verify_after,
+        lambda: sync_packages(project, clean),
+        repair_first=not clean,
+    )
     success("Sync complete.")
 
 
@@ -835,16 +859,21 @@ def run(project: UVRevProject, run_args: tuple[str, ...]) -> None:
     The venv is only synced (and therefore writable) before the command runs,
     the command itself runs with the protected venv.
 
+    An environment that is unprotected for a hotfix ('uvrev unprotect') is
+    neither synced nor repaired: the command runs with the venv as it is.
+
+    \b
     Examples:
         uvrev run python script.py
         uvrev run pytest
         uvrev run -- myapp --help
     """
-    try:
-        uv("sync", "--locked", "--check", project=project)
-    except SubprocessFailure:
-        with writable_venv(project):
-            uv("sync", "--locked", project=project)
+    if read_marker(project.unprotected_marker_path) is None:
+        try:
+            uv("sync", "--locked", "--check", project=project)
+        except SubprocessFailure:
+            with writable_venv(project):
+                uv("sync", "--locked", project=project)
     uv("run", "--no-sync", *run_args, project=project, keep_stdout=True)
 
 
@@ -852,6 +881,8 @@ def protect_report(
     ctx: click.Context,
     changed: bool,
     protected: bool | None,
+    state: str | None = None,
+    repaired: RepairResult | None = None,
     error_message: str | None = None,
 ) -> ProtectReport:
     project: UVRevProject = ctx.params["project"]
@@ -860,6 +891,8 @@ def protect_report(
         changed=changed,
         protected=protected,
         path=str(project.venv_path),
+        state=state,
+        repair=RepairSummary.from_result(repaired),
         error_message=error_message,
     )
 
@@ -868,34 +901,36 @@ def protect_error_report(ctx: click.Context, message: str) -> ProtectReport:
     return protect_report(ctx, changed=False, protected=None, error_message=message)
 
 
-def change_protection(
-    project: UVRevProject, change: Callable[[UVRevProject], None]
-) -> bool:
-    """Protect or unprotect the venv.
-
-    Returns:
-        True if permissions were changed.
-    """
-    before = permissions(project.venv_path)
-    change(project)
-    return permissions(project.venv_path) != before
-
-
 @cli.command(error_report=protect_error_report)
 @env_option
 @json_option
 @click.pass_context
 def protect(ctx: click.Context, project: UVRevProject, as_json: bool) -> None:
-    """Make the venv read-only, so it can not be changed by accident"""
-    changed = change_protection(project, protect_venv)
+    """Make the venv read-only, so it can not be changed by accident
+
+    An environment that was unprotected with 'uvrev unprotect' is repaired
+    first: afterwards its venv only contains the files of the locked packages.
+    Packages with changed files are reinstalled, other files are removed.
+    """
+    repaired = repair(project)
+    protect_venv(project)
     success(f"Protected {project.venv_path}")
+    if repaired is not None:
+        success(
+            f"Repaired: {len(repaired.packages)} package(s) reinstalled"
+            f"{' (' + ', '.join(repaired.packages) + ')' if repaired.packages else ''}"
+            f", {len(repaired.removed_files)} file(s) removed"
+        )
     if not project.settings.protect:
         warning(
             "Protection is disabled, so uvrev does not make the venv writable "
             "for changes. Run 'uvrev unprotect' before changing the environment."
         )
     if as_json:
-        click.echo(protect_report(ctx, changed, protected=True).to_json())
+        report = protect_report(
+            ctx, changed=repaired is not None, protected=True, repaired=repaired
+        )
+        click.echo(report.to_json())
 
 
 @cli.command(error_report=protect_error_report)
@@ -903,13 +938,45 @@ def protect(ctx: click.Context, project: UVRevProject, as_json: bool) -> None:
 @json_option
 @click.pass_context
 def unprotect(ctx: click.Context, project: UVRevProject, as_json: bool) -> None:
-    """Make the venv writable"""
-    changed = change_protection(project, unprotect_venv)
-    success(f"{project.venv_path} is writable")
+    """Make the venv writable for a hotfix
+
+    It is fast and can not be interrupted with Ctrl+C. The environment is
+    marked as unprotected (.unprotected). The next 'uvrev protect', or the
+    next command that changes the environment, repairs it first: packages
+    whose files were changed since now are reinstalled, and files that no
+    package installed are removed. 'uvrev run' leaves it as it is.
+    """
+    changed, marker = mark_unprotected(project)
+    if changed:
+        success(f"{project.venv_path} is writable")
+    else:
+        success(f"{project.venv_path} is already unprotected")
+    if marker.state == "forced":
+        warning(
+            "It is not known since when the venv is writable (an earlier "
+            "'uvrev unprotect' did not finish, or .unprotected was changed). "
+            "The next 'uvrev protect' has to compare every file with its package, "
+            "which is slower. Run 'uvrev sync --clean' afterwards to be sure."
+        )
+    others = [
+        name
+        for name in list_projects(get_base_dir())
+        if name != project.project_path.name
+    ]
+    if others:
+        warning(
+            "There are other environments: "
+            f"{', '.join(sorted(others))}. Files of the same package are shared, "
+            "so a file changed here is changed there as well and stays changed "
+            "there. Run 'uvrev verify --fix' for them afterwards."
+        )
     if project.settings.protect:
-        warning("The next change of the environment protects it again.")
+        warning("The next change of the environment repairs and protects it again.")
+    else:
+        warning("The next change of the environment repairs it again.")
     if as_json:
-        click.echo(protect_report(ctx, changed, protected=False).to_json())
+        report = protect_report(ctx, changed, protected=False, state=marker.state)
+        click.echo(report.to_json())
 
 
 def verify_report(

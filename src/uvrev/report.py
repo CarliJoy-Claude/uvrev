@@ -8,6 +8,7 @@ from packaging.utils import NormalizedName, canonicalize_name
 from packaging.version import Version
 
 from .differ import Changes, Diff, Names, VersionChange
+from .repair import RepairResult
 from .types import Revision
 from .verify import Problem, VerifyResult
 
@@ -115,6 +116,36 @@ class VerifySummary:
 
 
 @dataclass(frozen=True)
+class RepairSummary:
+    """Repair of an unprotected environment, as shown in the reports
+
+    >>> from pathlib import Path
+    >>> result = RepairResult("fast", (canonicalize_name("six"),), (Path("x.py"),))
+    >>> RepairSummary.from_result(result)
+    RepairSummary(mode='fast', packages=('six',), removed_files=('x.py',))
+    >>> RepairSummary.from_result(None) is None
+    True
+    """
+
+    # fast: by the files changed since unprotecting, full: by the hash of every file
+    mode: str
+    # reinstalled packages
+    packages: tuple[str, ...]
+    # removed files that no package installed
+    removed_files: tuple[str, ...]
+
+    @classmethod
+    def from_result(cls, result: RepairResult | None) -> Self | None:
+        if result is None:
+            return None
+        return cls(
+            mode=result.mode,
+            packages=tuple(result.packages),
+            removed_files=tuple(map(str, result.removed_files)),
+        )
+
+
+@dataclass(frozen=True)
 class Report:
     """JSON report of a command, the field order is the order in the JSON"""
 
@@ -135,6 +166,9 @@ class Report:
     # pinned Python request (.python-version), None if it did not change
     python_request: VersionChange | None
     environments: EnvironmentsChange | None
+    # repair of the unprotected environment before the change, None if it
+    # was not marked as unprotected
+    repair: RepairSummary | None
     # result of verifying the venv after the change, None if it did not run
     verify: VerifySummary | None
     error_message: str | None
@@ -148,6 +182,7 @@ class Report:
         options: Mapping[str, Option] | None = None,
         verify: VerifyResult | None = None,
         error_message: str | None = None,
+        repair: RepairResult | None = None,
     ) -> Self:
         """Build the report of a command that changed the environment.
 
@@ -157,6 +192,7 @@ class Report:
             change: Outcome of the command.
             options: Options given to the subcommand, e.g. ``{"upgrade_all": True}``.
             verify: Result of verifying (and fixing) the venv afterwards.
+            repair: Repair of the unprotected environment before the change.
             error_message: Error that occurred after the change (e.g. the venv
                 could not be fixed), marks the report as failed.
 
@@ -209,6 +245,7 @@ class Report:
                 canonicalize_name("python")
             ),
             environments=EnvironmentsChange.from_diff(change.environments),
+            repair=RepairSummary.from_result(repair),
             verify=VerifySummary.from_result(verify) if verify else None,
             error_message=error_message,
         )
@@ -257,6 +294,7 @@ class Report:
             python=None,
             python_request=None,
             environments=None,
+            repair=None,
             verify=None,
             error_message=error_message,
         )
@@ -294,6 +332,7 @@ class Report:
           "python": null,
           "python_request": null,
           "environments": null,
+          "repair": null,
           "verify": null,
           "error_message": "boom"
         }
@@ -345,12 +384,17 @@ class EnvCreateReport(CommandReport):
 class ProtectReport(CommandReport):
     """Report of ``uvrev protect`` and ``uvrev unprotect``"""
 
-    # True if permissions were changed
+    # protect: True if the environment was marked as unprotected
+    # unprotect: True if it was not marked as unprotected (in a defined state)
     changed: bool
     # state afterwards, None if unknown (the command failed)
     protected: bool | None
     # path of the venv
     path: str
+    # unprotect: state of the mark (post-chmod or forced), otherwise None
+    state: str | None
+    # protect: repair of the unprotected environment, otherwise None
+    repair: RepairSummary | None
     error_message: str | None
 
 

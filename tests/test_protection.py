@@ -182,7 +182,7 @@ class TestCli:
 
         assert result.exit_code == 0
         assert "chmod -R u+w .venv" in result.output
-        assert "next change of the environment protects it again" in result.output
+        assert "next change of the environment repairs and protects it" in result.output
         assert writable_paths(synced_project.venv_path) != ()
 
         result = invoke("protect")

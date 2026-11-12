@@ -6,11 +6,10 @@ from typing import Any
 
 import pytest
 from click.testing import Result
-from conftest import Invoker
+from conftest import Invoker, permissions
 
 from uvrev import operations
 from uvrev.commands import git
-from uvrev.protection import permissions
 from uvrev.types import UVRevProject
 
 NO_CHANGES: dict[str, list[str]] = {

@@ -57,9 +57,25 @@ class UVRevProject:
         return tuple(dict.fromkeys(path.resolve() for path in found))
 
     @property
+    def interpreter(self) -> Path | None:
+        """The Python interpreter of the venv, None if the venv does not exist"""
+        for python in (
+            self.venv_path / "bin" / "python",
+            self.venv_path / "Scripts" / "python.exe",
+        ):
+            if python.exists():
+                return python
+        return None
+
+    @property
     def created_marker_path(self) -> Path:
         """Exists if the environment was created completely"""
         return self.project_path / constants.CREATED_MARKER_FILE
+
+    @property
+    def unprotected_marker_path(self) -> Path:
+        """Exists while the venv is unprotected by ``uvrev unprotect``"""
+        return self.project_path / constants.UNPROTECTED_MARKER_FILE
 
     def created_successfully(self) -> bool:
         return self.created_marker_path.exists()

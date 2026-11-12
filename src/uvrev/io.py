@@ -23,3 +23,17 @@ def write_pyproject(project: UVRevProject, data: tomlkit.TOMLDocument) -> None:
         data: Dictionary to write as TOML.
     """
     project.pyproject_path.write_text(tomlkit.dumps(data))
+
+
+def exclude_from_git(project: UVRevProject, *names: str) -> None:
+    """Let git ignore files of uvrev in the folder of an environment.
+
+    Uses ``.git/info/exclude``, so no tracked file is changed.
+    Existing entries are kept, names are added only once.
+    """
+    exclude = project.project_path / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    ignored = exclude.read_text().splitlines() if exclude.exists() else []
+    missing = [name for name in names if name not in ignored]
+    if missing:
+        exclude.write_text("\n".join((*ignored, *missing)) + "\n")
