@@ -135,6 +135,20 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   the ctime can not. Old ext3 only stores seconds. `time.time()` is not aligned
   with file timestamps: take "now" from the filesystem (touch a file, read its
   ctime) and wait until its clock moved on (`wait_for_clock()`).
+- `sync --clean` replaces the `.venv` in place by default (`replace_venv()`): build
+  `.venv_new` with `uv venv --relocatable` + `uv sync` (via `UV_PROJECT_ENVIRONMENT`),
+  rename `.venv` to `.venv_to_delete` and `.venv_new` to `.venv`, compile bytecode,
+  protect, delete the old one. Tested: `uv sync` keeps a relocatable venv (scripts
+  are `#!/bin/sh`, without it they contain the path); renaming a read-only folder
+  within the same parent works for a normal user; uv's compiled `.pyc` embed the
+  path of the temporary venv (Python corrects it at runtime), so compile after the
+  rename. Deleting a protected venv only needs its folders writable
+  (`remove_protected_tree()`): `chmod -R` would also change files shared through
+  hardlinks. The peak disk use is twice that of deleting first (117 vs 59 MB). A
+  free-space check was considered and rejected as too complicated.
+- When a script rewrites a block of `cli.py`, assert that only the intended
+  command lies between the start and end marker (a wrong marker once removed
+  four commands, only the full test run noticed).
 - A valid venv contains only: the files in the `RECORD` of its packages, the
   files of the venv itself (`is_venv_file()`, they can not be restored) and
   bytecode of an existing source. `uv sync --reinstall` does not restore the

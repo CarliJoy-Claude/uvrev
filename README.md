@@ -67,7 +67,7 @@ uvrev --help
 | `uvrev env fix`    | Mark an environment as created successfully (see [Creating Environments](#creating-environments)) |
 | `uvrev add`        | Add packages to the current project (`--upgrade-all` also upgrades all others, `--python` changes the Python) |
 | `uvrev remove`     | Remove packages from the current project (`--ignore-missing` skips packages that are no dependencies) |
-| `uvrev sync`       | Sync project dependencies (`--clean` deletes the uv cache and the venv first) |
+| `uvrev sync`       | Sync project dependencies (`--clean` deletes the uv cache and installs everything anew) |
 | `uvrev upgrade`    | Upgrade all or the given packages (`--python` changes the Python) |
 | `uvrev upgrade-python` | Change the Python (e.g. `3.12` to `3.14`) without upgrading packages |
 | `uvrev list`       | List installed packages in the current environment |
@@ -147,14 +147,39 @@ What the repair can not do:
 ### Starting anew: `sync --clean`
 
 ```bash
-uvrev sync --clean
+uvrev sync --clean                # build the new .venv next to the old one, then swap (default)
+uvrev sync --clean --no-inplace   # delete the .venv first
 ```
 
-deletes the **complete** uv cache and the `.venv` and installs everything again from `uv.lock`.
-It is the way out of every state that can not be repaired. It needs the network,
-and running processes of the environment lose their files.
-The JSON report has `"clean": true` in `options`. It lists no changed packages if the versions are the
-same as before, although everything was installed again.
+deletes the **complete** uv cache and installs everything again from `uv.lock` into a new `.venv`.
+It is the way out of every state that can not be repaired. It needs the network.
+
+- **`--inplace` (the default)** tries to replace the `.venv` in place, so running processes are not disturbed:
+  1. The uv cache is deleted.
+  2. A new, *relocatable* venv is created next to the old one (`.venv_new`) and synced with `uv.lock`.
+     Relocatable means that its scripts do not contain its path, which changes in the next step:
+     console scripts are `#!/bin/sh` wrappers, and the `activate` scripts find their folder themselves.
+  3. The old `.venv` is renamed to `.venv_to_delete`, the new one to `.venv`.
+     This also works for a protected `.venv`, it is not interruptible, and `.venv` only does not exist
+     for the moment between the two renames.
+  4. The bytecode is compiled (only now, as the compiled files contain the path), the `.venv` is protected
+     and the mark of `uvrev unprotect` is removed.
+  5. `.venv_to_delete` is deleted. If that fails, it is only a warning, as the new `.venv` is in place already.
+
+  Processes that run with the old `.venv` keep the files they have open. Files they open later come from the
+  new `.venv`, which was installed from the same `uv.lock`.
+  If anything fails before step 3, for example without network, the old `.venv` is untouched and the new one
+  is removed. Folders left behind by a killed run are deleted by the next `uvrev sync --clean`.
+  **It needs about twice as much free space as `--no-inplace`**, as the old `.venv` stays until the new one is
+  complete (measured: 117 MB instead of 59 MB for a `.venv` with numpy). uvrev does not check this beforehand:
+  if the disk is too small, use `--no-inplace`.
+- **`--no-inplace`** deletes the `.venv` first and installs it again, so running processes lose their files and the
+  environment is unusable while it is installed. It needs no additional space.
+- Without a `.venv` there is nothing to replace, the `.venv` is just created. The two options can only be used
+  with `--clean`.
+
+The JSON report has `"clean": true` and `"inplace": true` or `false` in `options`. It lists no changed packages if
+the versions are the same as before, although everything was installed again.
 
 ## Verify Environments
 

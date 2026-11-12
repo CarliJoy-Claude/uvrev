@@ -16,11 +16,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   files that no package installed are removed, the bytecode is brought in sync. The `.venv` and the cache are kept.
   - If the time of unprotecting is unknown, every file is compared with its hash instead.
   - If a file of the virtual environment itself was changed, the repair fails and asks for `uvrev sync --clean`.
-- `uvrev sync --clean`: deletes the complete uv cache and the `.venv` and installs everything again.
+- `uvrev sync --clean`: deletes the complete uv cache and installs everything again into a new `.venv`.
+  See the [README](README.md#starting-anew-sync---clean).
+  - `--inplace` (the default) tries to replace the `.venv` in place: a new relocatable venv is built next to the
+    old one (`.venv_new`) and swapped in, so running processes are not disturbed. It needs twice as much free
+    space as `--no-inplace`, which is not checked.
+  - `--no-inplace` deletes the `.venv` first.
 - JSON reports (`schema_version` stays 2):
   - change reports and `protect`: `repair` (`mode`, `packages`, `removed_files`), `null` if nothing was repaired.
   - `unprotect`: `state` (`post-chmod` or `forced`).
-  - `sync`: `options` contains `clean`.
+  - `sync`: `options` contains `clean` and `inplace` (`null` without `--clean`).
 
 ### Changed
 
