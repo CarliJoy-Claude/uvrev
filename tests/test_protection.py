@@ -6,7 +6,13 @@ import pytest
 from conftest import Invoker, writable_paths
 
 from uvrev.commands import uv
-from uvrev.protection import ChmodNotFoundError, protect, unprotect, writable_venv
+from uvrev.protection import (
+    ChmodNotFoundError,
+    protect,
+    remove_protected_tree,
+    unprotect,
+    writable_venv,
+)
 from uvrev.settings import Settings
 from uvrev.types import SubprocessFailure, UVRevProject
 
@@ -132,6 +138,64 @@ class TestDenied:
         with writable_venv(project):
             (project.venv_path / "lib" / "module.py").write_text("x = 2")
             (project.venv_path / "lib" / "new.py").touch()
+
+
+class TestRemoveProtectedTree:
+    @pytest.fixture
+    def tree(self, tmp_path: Path) -> Path:
+        """A protected venv: read-only files in read-only folders"""
+        venv = tmp_path / "venv"
+        (venv / "lib" / "pkg").mkdir(parents=True)
+        (venv / "lib" / "pkg" / "module.py").write_text("x = 1")
+        (venv / "bin").mkdir()
+        (venv / "bin" / "tool").write_text("#!/bin/sh")
+        for path in sorted(venv.rglob("*"), reverse=True):
+            path.chmod(0o555 if path.is_dir() else 0o444)
+        venv.chmod(0o555)
+        return venv
+
+    def test_removed(self, tree: Path) -> None:
+        remove_protected_tree(tree)
+
+        assert not tree.exists()
+
+    def test_shared_files_keep_their_permissions(
+        self, tree: Path, tmp_path: Path
+    ) -> None:
+        """Files can be shared with other venvs and the uv cache (hardlinks)"""
+        shared = tmp_path / "cache-file"
+        shared.write_text("x = 1")
+        shared.chmod(0o444)
+        (tree / "lib").chmod(0o755)
+        os.link(shared, tree / "lib" / "shared.py")
+        (tree / "lib").chmod(0o555)
+
+        remove_protected_tree(tree)
+
+        assert not tree.exists()
+        assert shared.read_text() == "x = 1"
+        assert stat.S_IMODE(shared.stat().st_mode) == 0o444
+        assert shared.stat().st_nlink == 1
+
+    def test_links_are_not_followed(self, tree: Path, tmp_path: Path) -> None:
+        """lib64 and the interpreter are links to somewhere else"""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "interpreter").write_text("")
+        outside.chmod(0o555)
+        # (links can only be added to folders that are writable)
+        for directory in (tree, tree / "bin"):
+            directory.chmod(0o755)
+        (tree / "bin" / "python").symlink_to(outside / "interpreter")
+        (tree / "lib64").symlink_to(outside)
+        for directory in (tree / "bin", tree):
+            directory.chmod(0o555)
+
+        remove_protected_tree(tree)
+
+        assert not tree.exists()
+        assert (outside / "interpreter").exists()
+        assert stat.S_IMODE(outside.stat().st_mode) == 0o555
 
 
 class TestWritableVenv:

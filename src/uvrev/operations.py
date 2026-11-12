@@ -21,7 +21,7 @@ from .commands import git, uv
 from .differ import Diff, create_changelog
 from .exceptions import RevisionNotFoundError
 from .io import exclude_from_git, read_pyproject, write_pyproject
-from .marker import remove_marker
+from .marker import remove_marker, uninterrupted
 from .parser import (
     any_version,
     parse_pyproject_deps,
@@ -31,11 +31,12 @@ from .parser import (
     parse_uv_lock_packages,
     same_except_any_version,
 )
-from .protection import unprotect, writable_venv
+from .protection import protect, remove_protected_tree, unprotect, writable_venv
 from .report import RevisionChange
 from .settings import Settings
 from .terminal import warning
 from .types import Revision, SubprocessFailure, UVRevProject
+from .verify import sync_bytecode
 
 PYPROJECT_FILE = "pyproject.toml"
 LOCK_FILE = "uv.lock"
@@ -857,18 +858,112 @@ def list_venv_packages(project: UVRevProject) -> Mapping[NormalizedName, Version
     }
 
 
-def sync_packages(project: UVRevProject, clean: bool = False) -> RevisionChange:
+def remove_leftover_venvs(project: UVRevProject) -> None:
+    """Delete the temporary folders of an earlier ``sync --clean --inplace``.
+
+    They are left behind if it was killed, or if the old venv could not be deleted.
+    """
+    for leftover in (project.venv_new_path, project.venv_to_delete_path):
+        if leftover.exists():
+            remove_protected_tree(leftover)
+
+
+def swap_venv(project: UVRevProject) -> None:
+    """Put the new venv in the place of the old one.
+
+    Both are renamed in the folder of the environment, so this works for a
+    protected venv, too. Running processes keep the files they have open.
+    It can not be interrupted, as the venv is missing between the two renames.
+    If the second fails, the old venv is put back.
+
+    Raises:
+        OSError: If the new venv could not be moved into place.
+    """
+    old, new, trash = (
+        project.venv_path,
+        project.venv_new_path,
+        project.venv_to_delete_path,
+    )
+    with uninterrupted():
+        old.rename(trash)
+        try:
+            new.rename(old)
+        except OSError:
+            trash.rename(old)
+            raise
+
+
+def replace_venv(
+    project: UVRevProject,
+    remove_tree: Callable[[Path], None] = remove_protected_tree,
+) -> None:
+    """Replace the venv by a new, complete one, while the old one stays usable.
+
+    1. The complete uv cache is deleted.
+    2. A new venv is created next to the old one (``.venv_new``) and synced with
+       uv.lock. It is relocatable: its scripts and activate scripts do not contain
+       its path, which changes with the next step. Bytecode is not compiled yet,
+       as the compiled files would contain the path of ``.venv_new``.
+    3. The old venv is renamed to ``.venv_to_delete``, the new one to ``.venv``.
+    4. The bytecode is compiled, the venv is protected (if enabled).
+    5. The old venv is deleted.
+
+    If something fails before step 3, the old venv is untouched and the new one is
+    removed. Needs about twice the disk space of deleting the venv first.
+
+    Args:
+        project: Project with a venv.
+        remove_tree: Deletes the old venv. If this fails, the new venv is in place
+            anyway, so it is only a warning (the next clean sync deletes it).
+    """
+    uv("cache", "clean", "--force", project=project)
+    new = project.venv_new_path
+    try:
+        uv("venv", "--relocatable", new.name, project=project)
+        uv(
+            "sync",
+            "--frozen",
+            project=project,
+            env={
+                "UV_PROJECT_ENVIRONMENT": str(new.absolute()),
+                "UV_COMPILE_BYTECODE": "false",
+            },
+        )
+    except BaseException:
+        remove_protected_tree(new)
+        raise
+    swap_venv(project)
+    sync_bytecode(project)
+    if project.settings.protect:
+        protect(project)
+    trash = project.venv_to_delete_path
+    try:
+        remove_tree(trash)
+    except OSError as e:
+        warning(
+            f"The new environment is in place, but {trash} could not be deleted: {e}. "
+            "Delete it yourself, or run 'uvrev sync --clean' again."
+        )
+
+
+def sync_packages(
+    project: UVRevProject, clean: bool = False, inplace: bool = True
+) -> RevisionChange:
     """Sync the virtual environment with the lock file.
 
     As the lock file is not changed, no revision is created.
 
     Args:
         project: Project to sync.
-        clean: Start anew: the complete uv cache and the virtual environment
-            are deleted first, so everything is downloaded and installed again.
-            This is the way out if the environment can not be repaired
-            (it is no longer marked as unprotected afterwards). Running
-            processes of the environment lose their files.
+        clean: Start anew: the complete uv cache is deleted and the virtual
+            environment is replaced, so everything is downloaded and installed
+            again. This is the way out if the environment can not be repaired
+            (it is no longer marked as unprotected afterwards).
+        inplace: With ``clean``: build the new venv next to the old one and swap
+            them (see ``replace_venv``). Running processes are not disturbed,
+            but it needs twice the disk space. Otherwise the venv is deleted
+            first, and running processes lose their files. Without a venv, there
+            is nothing to replace.
 
     Returns:
         Changes of the installed packages (the versions, so a clean sync of
@@ -877,14 +972,19 @@ def sync_packages(project: UVRevProject, clean: bool = False) -> RevisionChange:
     installed_before = list_venv_packages(project)
     python_before = get_python_version(project)
     if clean:
-        # a protected .venv can not be deleted
-        unprotect(project)
-        # --force: don't wait for other uv processes using the cache
-        uv("cache", "clean", "--force", project=project)
-        if project.venv_path.exists():
-            shutil.rmtree(project.venv_path)
-    with writable_venv(project):
-        uv("sync", "--frozen", project=project)
+        remove_leftover_venvs(project)
+    if clean and inplace and project.venv_path.exists():
+        replace_venv(project)
+    else:
+        if clean:
+            # a protected .venv can not be deleted
+            unprotect(project)
+            # --force: don't wait for other uv processes using the cache
+            uv("cache", "clean", "--force", project=project)
+            if project.venv_path.exists():
+                shutil.rmtree(project.venv_path)
+        with writable_venv(project):
+            uv("sync", "--frozen", project=project)
     if clean:
         remove_marker(project.unprotected_marker_path)
     python_after = get_python_version(project)

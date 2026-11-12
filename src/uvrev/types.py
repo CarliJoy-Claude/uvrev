@@ -45,6 +45,16 @@ class UVRevProject:
         return self.project_path / ".venv"
 
     @property
+    def venv_new_path(self) -> Path:
+        """Where ``uvrev sync --clean`` builds the new venv"""
+        return self.project_path / constants.VENV_NEW_DIR
+
+    @property
+    def venv_to_delete_path(self) -> Path:
+        """Where ``uvrev sync --clean`` keeps the old venv until it is deleted"""
+        return self.project_path / constants.VENV_TO_DELETE_DIR
+
+    @property
     def site_packages(self) -> tuple[Path, ...]:
         """The site-packages directories of the venv (empty if not created yet)
 

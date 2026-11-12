@@ -138,3 +138,12 @@ def permissions(venv: Path) -> dict[Path, int]:
     """The mode of all files and folders of a venv (links are skipped)"""
     paths = (venv, *venv.rglob("*")) if venv.is_dir() else ()
     return {path: path.lstat().st_mode for path in paths if not path.is_symlink()}
+
+
+@pytest.fixture
+def private_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A private uv cache: ``uvrev sync --clean`` deletes the complete cache of uv,
+    never the one of the developer"""
+    cache = tmp_path / "uv-cache"
+    monkeypatch.setenv("UV_CACHE_DIR", str(cache))
+    return cache

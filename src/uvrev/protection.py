@@ -1,4 +1,5 @@
 import shutil
+import stat
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
@@ -39,6 +40,40 @@ def chmod(venv: Path, mode: str, command: str) -> None:
     if shutil.which(command) is None:
         raise ChmodNotFoundError(command)
     run_cmd(command, "-R", mode, venv.name, cwd=venv.parent)
+
+
+def make_directories_writable(path: Path) -> None:
+    """Make the folders below path (and path itself) accessible for the owner.
+
+    Only folders are changed. Deleting a file needs no permission on the file
+    itself, only on its folder. Files can be shared with other environments
+    through hardlinks (and with the uv cache), their permissions must stay.
+    Symlinks are not followed.
+    """
+    mode = path.lstat().st_mode
+    if not stat.S_ISDIR(mode):
+        return
+    path.chmod(stat.S_IMODE(mode) | stat.S_IRWXU)
+    for child in path.iterdir():
+        make_directories_writable(child)
+
+
+def remove_protected_tree(path: Path) -> None:
+    """Delete a folder, also a protected venv (see ``make_directories_writable``).
+
+    >>> import tempfile
+    >>> with tempfile.TemporaryDirectory() as directory:
+    ...     venv = Path(directory, "venv")
+    ...     (venv / "lib").mkdir(parents=True)
+    ...     (venv / "lib" / "module.py").touch()
+    ...     for item in (venv / "lib" / "module.py", venv / "lib", venv):
+    ...         item.chmod(0o555 if item.is_dir() else 0o444)
+    ...     remove_protected_tree(venv)
+    ...     venv.exists()
+    False
+    """
+    make_directories_writable(path)
+    shutil.rmtree(path)
 
 
 def protect_venv(venv: Path, settings: Settings) -> None:

@@ -12,3 +12,8 @@ PYTHON_VERSION_LOCK_FILE: Final[str] = ".python-version.lock"
 CREATED_MARKER_FILE: Final[str] = ".uvrev_created_successfully"
 # exists while the venv is unprotected by ``uvrev unprotect``, see marker.py
 UNPROTECTED_MARKER_FILE: Final[str] = ".unprotected"
+# temporary folders of ``uvrev sync --clean --inplace``: the new venv, built next
+# to the old one, and the old one until it is deleted. uv writes a .gitignore
+# into every venv, so git ignores them.
+VENV_NEW_DIR: Final[str] = ".venv_new"
+VENV_TO_DELETE_DIR: Final[str] = ".venv_to_delete"

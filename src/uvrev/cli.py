@@ -677,33 +677,66 @@ def remove(
         success("Nothing to remove.")
 
 
-@cli.command(error_report=change_error_report, report_options=("clean",))
+def inplace_callback(
+    ctx: click.Context, _param: click.Parameter, value: bool | None
+) -> bool | None:
+    """--inplace and --no-inplace only exist together with --clean.
+
+    Returns:
+        With --clean whether to replace the venv in place (the default),
+        otherwise None.
+    """
+    if not ctx.params.get("clean"):
+        if value is not None:
+            raise click.UsageError(
+                "--inplace and --no-inplace can only be used with --clean", ctx=ctx
+            )
+        return None
+    return True if value is None else value
+
+
+@cli.command(error_report=change_error_report, report_options=("clean", "inplace"))
 @click.option(
     "--clean",
     is_flag=True,
     default=False,
-    help="Start anew: delete the complete uv cache and the virtual environment "
-    "first. Everything is downloaded again, running processes lose their files.",
+    is_eager=True,  # --inplace needs to know it
+    help="Start anew: delete the complete uv cache and replace the virtual "
+    "environment, so everything is downloaded and installed again.",
+)
+@click.option(
+    "--inplace/--no-inplace",
+    default=None,
+    callback=inplace_callback,
+    help="With --clean: --inplace (the default) tries to replace the .venv in place. "
+    "A new environment is built next to the old one and swapped in, so running "
+    "processes keep their files, but this needs twice as much free space as "
+    "--no-inplace. --no-inplace deletes the .venv first.",
 )
 @env_option
 @json_option
 @verify_option
 def sync(
-    project: UVRevProject, clean: bool, as_json: bool, verify_after: bool | None
+    project: UVRevProject,
+    clean: bool,
+    inplace: bool | None,
+    as_json: bool,
+    verify_after: bool | None,
 ) -> None:
     """Sync project dependencies
 
     With --json the changes of the installed packages are reported.
 
     --clean is the way out if an environment can not be repaired: it deletes
-    the cache of uv (all of it) and the virtual environment and installs
-    everything again.
+    the cache of uv (all of it) and replaces the virtual environment, which is
+    installed again from uv.lock. By default the old environment stays in place
+    until the new one is complete, see --inplace.
     """
     run_operation(
         project,
         as_json,
         verify_after,
-        lambda: sync_packages(project, clean),
+        lambda: sync_packages(project, clean, bool(inplace)),
         repair_first=not clean,
     )
     success("Sync complete.")

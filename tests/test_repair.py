@@ -515,16 +515,15 @@ class TestCli:
         assert marker(project) == mark
 
 
+@pytest.mark.usefixtures("private_cache")
 class TestSyncClean:
-    @pytest.fixture(autouse=True)
-    def private_cache(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-        """--clean deletes the complete uv cache: never the one of the developer"""
-        cache = tmp_path / "uv-cache"
-        monkeypatch.setenv("UV_CACHE_DIR", str(cache))
-        return cache
-
+    @pytest.mark.parametrize("inplace", [True, False])
     def test_clean(
-        self, invoke: Invoker, project: UVRevProject, private_cache: Path
+        self,
+        invoke: Invoker,
+        project: UVRevProject,
+        private_cache: Path,
+        inplace: bool,
     ) -> None:
         # the way out of a state that can not be repaired
         invoke("unprotect")
@@ -536,15 +535,18 @@ class TestSyncClean:
         extra.write_text("")
         (private_cache / "left-over").mkdir(parents=True, exist_ok=True)
 
-        result = invoke("sync", "--clean", "--json")
+        # the order of the options does not matter
+        flag = "--inplace" if inplace else "--no-inplace"
+        result = invoke("sync", flag, "--clean", "--json")
 
         assert result.exit_code == 0, result.output
         report: dict[str, Any] = json.loads(result.stdout)
-        assert report["options"] == {"clean": True}
+        assert report["options"] == {"clean": True, "inplace": inplace}
         assert report["repair"] is None
         # the versions are the same, so no package changed
         assert report["all_changed_packages"] == []
         assert "uv cache clean --force\n" in result.stderr
+        assert ("uv venv --relocatable .venv_new" in result.stderr) is inplace
         assert "Repairing" not in result.stderr
         assert not (private_cache / "left-over").exists()
         # the venv is new, valid, protected and not marked
@@ -561,6 +563,8 @@ class TestSyncClean:
         result = invoke("sync", "--clean")
 
         assert result.exit_code == 0, result.output
+        # there is nothing to keep alive, so the venv is just created
+        assert "uv venv" not in result.stderr
         assert find_problems(project) == ()
 
     def test_sync_option_in_report(
@@ -568,4 +572,5 @@ class TestSyncClean:
     ) -> None:
         report = json.loads(invoke("sync", "--json").stdout)
 
-        assert report["options"] == {"clean": False}
+        # --inplace only means something together with --clean
+        assert report["options"] == {"clean": False, "inplace": None}

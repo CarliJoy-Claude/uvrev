@@ -153,6 +153,7 @@ def uv(
     project: UVRevProject,
     keep_stdout: bool = False,
     capture_output: bool = False,
+    env: Mapping[str, str] | None = None,
 ) -> str:
     """
     Execute uv command in project directory
@@ -162,6 +163,8 @@ def uv(
         project: Project to run command in
         keep_stdout: If True, the command writes to stdout, otherwise to stderr
         capture_output: If True, capture and return stdout
+        env: Environment variables for this command, added to those of uvrev
+            (e.g. ``UV_PROJECT_ENVIRONMENT`` to sync into another venv)
 
     Returns:
         Command stdout if capture_output=True, otherwise an empty string
@@ -169,7 +172,7 @@ def uv(
     show_cwd_change(project.project_path)
     cmd = ("uv", *args)
     show_cmd(cmd)
-    env = uv_environ(project, os.environ)
+    env = {**uv_environ(project, os.environ), **(env or {})}
     stdout: int | None = STDERR_FD
     if capture_output:
         stdout = subprocess.PIPE
