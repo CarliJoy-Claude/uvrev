@@ -27,6 +27,7 @@ from . import constants
 from .commands import uv
 from .differ import Diff
 from .environment import update_environments
+from .interpreter import get_python_version, python_message, python_request
 from .marker import remove_marker
 from .parser import (
     any_version,
@@ -34,7 +35,6 @@ from .parser import (
     parse_uv_lock_packages,
 )
 from .protection import unprotect, writable_venv
-from .python import get_python_version, python_message, python_request
 from .repair import RepairResult, repair
 from .revisions import (
     RevisionChange,

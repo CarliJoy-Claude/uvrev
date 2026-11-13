@@ -22,12 +22,12 @@ from packaging.version import Version
 from . import constants
 from .commands import git, uv
 from .exceptions import EnvironmentExistsError
+from .interpreter import update_python_lock
 from .io import exclude_from_git, read_pyproject, write_pyproject
 from .parser import (
     parse_uv_environments,
 )
 from .protection import unprotect, writable_venv
-from .python import update_python_lock
 from .settings import Settings
 from .types import UVRevProject
 

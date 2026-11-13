@@ -74,7 +74,7 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   not import `report`, and `report` must not import `operations`.
 - The modules from bottom to top: `constants`, `settings`, `terminal`,
   `exceptions`, `types`, `commands`, then the domain (`parser`, `differ`,
-  `io`, `marker`, `protection`, `verify`, `repair`, `python`, `revisions`,
+  `io`, `marker`, `protection`, `verify`, `repair`, `interpreter`, `revisions`,
   `environment`, `operations`, `tool`), then `report`, `reporting`,
   `options` and `cli`.
 

@@ -13,9 +13,9 @@ import uvrev.cli
 from uvrev import constants, environment, operations, revisions
 from uvrev.commands import git
 from uvrev.exceptions import SubprocessFailure
+from uvrev.interpreter import get_python_version
 from uvrev.io import read_pyproject
 from uvrev.protection import unprotect
-from uvrev.python import get_python_version
 from uvrev.types import UVRevProject
 
 

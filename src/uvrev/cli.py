@@ -17,6 +17,7 @@ from . import constants, settings as uvrev_settings
 from .commands import uv
 from .environment import configure_git, create_env, list_projects, mark_created
 from .exceptions import SubprocessFailure
+from .interpreter import get_python_version, python_request
 from .marker import read_marker
 from .operations import (
     apply_change,
@@ -39,7 +40,6 @@ from .options import (
 )
 from .parser import same_python_request
 from .protection import protect as protect_venv, writable_venv
-from .python import get_python_version, python_request
 from .repair import RepairResult, mark_unprotected, repair
 from .report import (
     EnvCreateReport,

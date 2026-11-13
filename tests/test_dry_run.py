@@ -10,7 +10,7 @@ from conftest import Invoker, permissions
 
 from uvrev import operations, revisions
 from uvrev.commands import git
-from uvrev.python import preview_python
+from uvrev.interpreter import preview_python
 from uvrev.types import UVRevProject
 
 NO_CHANGES: dict[str, list[str]] = {

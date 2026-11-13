@@ -20,6 +20,7 @@ from . import constants
 from .commands import git
 from .differ import Diff, create_changelog
 from .exceptions import RevisionNotFoundError, SubprocessFailure
+from .interpreter import preview_python, update_python_lock
 from .parser import (
     parse_pyproject_deps,
     parse_python_lock,
@@ -28,7 +29,6 @@ from .parser import (
     parse_uv_lock_packages,
     same_except_any_version,
 )
-from .python import preview_python, update_python_lock
 from .types import Revision, UVRevProject
 
 
