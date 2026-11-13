@@ -23,9 +23,10 @@ import pytest
 from click.testing import CliRunner, Result
 from conftest import writable_paths
 
-from uvrev.cli import Services, cli
+from uvrev.cli import cli
 from uvrev.commands import uv_tool
 from uvrev.protection import unprotect_venv
+from uvrev.reporting import Services
 from uvrev.settings import Settings, load_settings
 from uvrev.tool import RECEIPT_NAME, ToolServices
 

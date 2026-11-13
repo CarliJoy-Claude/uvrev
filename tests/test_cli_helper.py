@@ -5,7 +5,7 @@ import click
 import pytest
 
 from uvrev import constants
-from uvrev.cli import env_option_callback, get_base_dir
+from uvrev.options import env_option_callback, get_base_dir
 from uvrev.types import UVRevProject
 
 

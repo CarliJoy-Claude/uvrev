@@ -10,8 +10,9 @@ from click.testing import CliRunner, Result
 from conftest import Invoker
 
 from uvrev import constants
-from uvrev.cli import Services, cli
+from uvrev.cli import cli
 from uvrev.protection import unprotect
+from uvrev.reporting import Services
 from uvrev.settings import load_settings
 from uvrev.types import UVRevProject
 from uvrev.verify import Problem, VerifyResult

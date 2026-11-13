@@ -52,7 +52,7 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
 - stdout is reserved for results (e.g. the `--json` report). Logs, executed
   commands and the output of `uv`, `git` and `chmod` go to stderr.
   Only `uvrev run` and the tools of `uvrev tool run` write to stdout.
-- JSON reports (`--json`): all commands are `ReportingCommand`s (`cli.py`), which
+- JSON reports (`--json`): all commands are `ReportingCommand`s (`reporting.py`), which
   print a report for every failure. A command with `--json` gives it an
   `error_report` builder and the `report_options` shown as `options`.
   Never raise for a failure after printing a success report.
@@ -77,7 +77,7 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   globals has hidden side effects. Make dependencies explicit instead:
   - small functions take the dependency as a parameter, defaulting to the
     real implementation (e.g. `uv: UvRunner = uv_tool`),
-  - bigger flows take a frozen service object: `Services` in `cli.py`
+  - bigger flows take a frozen service object: `Services` in `reporting.py`
     (settings, verify, tool services) and `ToolServices` in `tool.py`
     (uv runner, download, build, lock). Tests pass their own, e.g.
     `CliRunner().invoke(cli, args, obj=Services(...))`,
@@ -172,7 +172,7 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   (pin first, then the command's uv call). `env create` pins the request too.
 - uv runs in the folder of the environment (a dry run in a temporary copy), not
   in the working directory of the user: paths given by the user must be made
-  absolute first (`absolute_python_request()`, a click callback in `cli.py`).
+  absolute first (`absolute_python_request()`, a click callback in `options.py`).
   `uv python pin` accepts a wrong path, only the following uv command fails.
 - `uv add` keeps the locked versions of other packages; with `--upgrade-all`
   use `uv add --upgrade`, then `uv sync --upgrade`.

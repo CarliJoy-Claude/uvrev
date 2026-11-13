@@ -9,8 +9,9 @@ import pytest
 from click.testing import CliRunner, Result
 from conftest import Invoker
 
-from uvrev.cli import Services, cli
+from uvrev.cli import cli
 from uvrev.commands import CommandNotFoundError, git, uv
+from uvrev.reporting import Services
 from uvrev.settings import installed_python_versions, load_settings
 from uvrev.types import UVRevProject
 from uvrev.verify import VerifyResult

@@ -8,8 +8,9 @@ from conftest import Invoker, writable_paths
 from packaging.utils import NormalizedName
 
 from uvrev import operations
-from uvrev.cli import Services, cli
+from uvrev.cli import cli
 from uvrev.protection import unprotect
+from uvrev.reporting import Services
 from uvrev.settings import load_settings
 from uvrev.types import UVRevProject
 from uvrev.verify import Problem, VerifyResult, find_problems, verify
