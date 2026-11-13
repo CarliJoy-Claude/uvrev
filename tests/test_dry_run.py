@@ -8,8 +8,9 @@ import pytest
 from click.testing import Result
 from conftest import Invoker, permissions
 
-from uvrev import operations
+from uvrev import operations, revisions
 from uvrev.commands import git
+from uvrev.python import preview_python
 from uvrev.types import UVRevProject
 
 NO_CHANGES: dict[str, list[str]] = {
@@ -26,7 +27,7 @@ def snapshot(project: UVRevProject) -> dict[str, Any]:
         "head": git("rev-parse", "HEAD", project=project, capture_output=True),
         "tags": git("tag", "--list", project=project, capture_output=True),
         "status": git("status", "--porcelain", project=project, capture_output=True),
-        "files": operations.current_state(project),
+        "files": revisions.current_state(project),
         "installed": operations.list_venv_packages(project),
         "permissions": permissions(project.venv_path),
         "entries": sorted(path.name for path in project.project_path.iterdir()),
@@ -257,7 +258,7 @@ class TestUpgradePython:
             scratch.python_version_path.write_text(f"{exact}\n")
             project.python_lock_path.write_text("3.0.0\n")
 
-            change = operations.preview_change(project, scratch)
+            change = revisions.preview_change(project, scratch)
 
         assert not change.created
         assert {name: str(v) for name, v in change.python.new.items()} == {
@@ -270,7 +271,7 @@ class TestUpgradePython:
         with operations.scratch_copy(project) as scratch:
             scratch.python_version_path.write_text("3.99\n")
 
-            assert operations.preview_python(project, scratch) == recorded
+            assert preview_python(project, scratch) == recorded
 
     def test_no_recorded_version(self, project: UVRevProject, tmp_path: Path) -> None:
         """Environments of old versions have no recorded interpreter version"""
@@ -279,4 +280,4 @@ class TestUpgradePython:
         with operations.scratch_copy(project) as scratch:
             # missing files are not copied
             assert not scratch.python_version_path.exists()
-            assert operations.preview_python(project, scratch) == ""
+            assert preview_python(project, scratch) == ""

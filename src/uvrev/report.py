@@ -7,15 +7,15 @@ when a report is printed is decided in ``cli.py``.
 
 import json
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Final, Literal, Self
 
-from packaging.specifiers import SpecifierSet
 from packaging.utils import NormalizedName, canonicalize_name
 from packaging.version import Version
 
 from .differ import Changes, Diff, Names, VersionChange
 from .repair import RepairResult
+from .revisions import RevisionChange
 from .types import Revision
 from .verify import Problem, VerifyResult
 
@@ -23,26 +23,6 @@ SCHEMA_VERSION: Final[int] = 2
 
 # value of a command line option in the report
 type Option = bool | str | None
-
-
-@dataclass(frozen=True)
-class RevisionChange:
-    """Outcome of a command that may change an environment"""
-
-    previous_revision: Revision
-    revision: Revision
-    packages: Diff[Version] = field(default_factory=Diff)
-    dependencies: Diff[SpecifierSet | None] = field(default_factory=Diff)
-    # exact version of the interpreter
-    python: Diff[Version] = field(default_factory=Diff)
-    environments: Diff[None] = field(default_factory=Diff)
-    # pinned Python request (.python-version)
-    python_request: Diff[str] = field(default_factory=Diff)
-
-    @property
-    def created(self) -> bool:
-        """True if a new revision was created"""
-        return self.revision != self.previous_revision
 
 
 @dataclass(frozen=True)

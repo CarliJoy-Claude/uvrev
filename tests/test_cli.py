@@ -12,11 +12,11 @@ from conftest import Invoker, writable_paths
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-from uvrev import constants, operations
+from uvrev import constants, environment
 from uvrev.commands import git
 from uvrev.io import read_pyproject
-from uvrev.operations import show_history
 from uvrev.parser import parse_uv_lock_packages
+from uvrev.revisions import show_history
 from uvrev.settings import PYTHON_VERSIONS_SUPPORTED_ENV
 from uvrev.types import UVRevProject
 
@@ -245,7 +245,7 @@ class TestEnvCreateIdempotent:
         assert "already exists" in result.output
         assert git("rev-parse", "HEAD", project=proj, capture_output=True) == head
         # also the function itself is idempotent
-        assert operations.create_env(fake_basedir, constants.DEFAULT_ENV) == proj
+        assert environment.create_env(fake_basedir, constants.DEFAULT_ENV) == proj
 
     def test_created_marker(self, invoke: Invoker, fake_basedir: Path) -> None:
         assert invoke("env", "create").exit_code == 0
@@ -361,7 +361,7 @@ class TestEnvironments:
         assert report["revision"] == 2
         assert report["environments"] == {
             "old": [],
-            "new": list(operations.environment_markers((pinned,))),
+            "new": list(environment.environment_markers((pinned,))),
         }
         assert self.environments(proj) == report["environments"]["new"]
         message = git("log", "-1", "--format=%B", project=proj, capture_output=True)

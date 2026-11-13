@@ -10,10 +10,11 @@ import pytest
 from click.testing import CliRunner, Result
 
 import uvrev.cli
-from uvrev import constants, operations
+from uvrev import constants, environment, operations, revisions
 from uvrev.commands import git
 from uvrev.io import read_pyproject
 from uvrev.protection import unprotect
+from uvrev.python import get_python_version
 from uvrev.types import SubprocessFailure, UVRevProject
 
 
@@ -41,7 +42,7 @@ def two_pythons() -> tuple[str, str]:
 @pytest.fixture
 def project(fake_basedir: Path) -> UVRevProject:
     """Freshly created project (revision 0)"""
-    return operations.create_env(fake_basedir, constants.DEFAULT_ENV)
+    return environment.create_env(fake_basedir, constants.DEFAULT_ENV)
 
 
 def pinned(proj: UVRevProject) -> str:
@@ -50,7 +51,7 @@ def pinned(proj: UVRevProject) -> str:
 
 
 def python_version(proj: UVRevProject) -> str:
-    version = operations.get_python_version(proj)
+    version = get_python_version(proj)
     assert version is not None
     return str(version)
 
@@ -81,7 +82,7 @@ class TestPythonLock:
         self, project: UVRevProject, data_dir: Path
     ) -> None:
         shutil.copytree(data_dir / "sample", project.project_path, dirs_exist_ok=True)
-        operations.create_revision(project, "Add sampleproject")
+        revisions.create_revision(project, "Add sampleproject")
 
         message = last_commit_message(project)
         assert "Pinned Versions:" in message
@@ -122,8 +123,8 @@ class TestPythonLock:
         unprotect(project)
         shutil.rmtree(project.venv_path)
 
-        assert operations.get_python_version(project) is None
-        change = operations.create_revision(project)
+        assert get_python_version(project) is None
+        change = revisions.create_revision(project)
         assert not change.created
         assert project.python_lock_path.exists()
 
@@ -152,9 +153,7 @@ class TestPythonLock:
 
     def test_create_with_python(self, fake_basedir: Path) -> None:
         """The given Python version is pinned"""
-        version = operations.get_python_version(
-            operations.create_env(fake_basedir, "default")
-        )
+        version = get_python_version(environment.create_env(fake_basedir, "default"))
         assert version is not None
         minor = f"{version.major}.{version.minor}"
 
@@ -171,7 +170,7 @@ class TestPythonLock:
         python.chmod(0o755)
 
         with pytest.raises(SubprocessFailure):
-            operations.get_python_version(proj)
+            get_python_version(proj)
 
 
 class TestUpgradePython:
@@ -298,7 +297,7 @@ class TestUpgradePython:
 
     def test_upgrade_and_restore(self, fake_basedir: Path) -> None:
         old_pinned, version = two_pythons()
-        project = operations.create_env(fake_basedir, "two", old_pinned)
+        project = environment.create_env(fake_basedir, "two", old_pinned)
         old_python = python_version(project)
         requires_python = read_pyproject(project)["project"]["requires-python"]
 
@@ -345,7 +344,7 @@ class TestUpgradePython:
     def test_below_requires_python(self, fake_basedir: Path) -> None:
         """uv python pin refuses versions not matching requires-python"""
         old, new = two_pythons()
-        project = operations.create_env(fake_basedir, "two", new)
+        project = environment.create_env(fake_basedir, "two", new)
 
         result = invoke("upgrade-python", "-e", "two", old, "--json")
 
@@ -385,7 +384,7 @@ class TestAddPython:
     def test_add_with_python(self, fake_basedir: Path) -> None:
         """uv python pin pins the version, uv add installs it"""
         old, new = two_pythons()
-        project = operations.create_env(fake_basedir, "two", old)
+        project = environment.create_env(fake_basedir, "two", old)
         old_python = python_version(project)
         requires_python = read_pyproject(project)["project"]["requires-python"]
 
@@ -413,7 +412,7 @@ class TestAddPython:
     def test_add_with_python_below_requires_python(self, fake_basedir: Path) -> None:
         """uv refuses the version, the files are not changed"""
         old, new = two_pythons()
-        project = operations.create_env(fake_basedir, "two", new)
+        project = environment.create_env(fake_basedir, "two", new)
 
         result = invoke("add", "-e", "two", "--python", old, "peppercorn")
 
@@ -489,7 +488,7 @@ class TestUpgradeWithPython:
 
     def test_other_python(self, fake_basedir: Path) -> None:
         old, new = two_pythons()
-        project = operations.create_env(fake_basedir, "two", old)
+        project = environment.create_env(fake_basedir, "two", old)
         old_python = python_version(project)
 
         result = invoke("upgrade", "-e", "two", "--python", new, "--json")

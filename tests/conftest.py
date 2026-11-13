@@ -9,7 +9,7 @@ import pytest
 from click.testing import CliRunner, Result
 
 import uvrev.cli
-from uvrev import constants, operations, settings
+from uvrev import constants, environment, operations, revisions, settings
 from uvrev.types import UVRevProject
 
 
@@ -103,9 +103,9 @@ def invoke() -> Invoker:
 def sample_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
     """Create a project with a lock file that is not yet installed"""
     proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
-    operations.create_env(fake_basedir, constants.DEFAULT_ENV)
+    environment.create_env(fake_basedir, constants.DEFAULT_ENV)
     shutil.copytree(data_dir / "sample", proj.project_path, dirs_exist_ok=True)
-    operations.create_revision(proj, "Add sampleproject")
+    revisions.create_revision(proj, "Add sampleproject")
     return proj
 
 
@@ -128,9 +128,9 @@ def synced_project(sample_project: UVRevProject) -> UVRevProject:
 def upgradeable_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
     """Create a project with an uv.lock that can be updated"""
     proj = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
-    operations.create_env(fake_basedir, constants.DEFAULT_ENV)
+    environment.create_env(fake_basedir, constants.DEFAULT_ENV)
     shutil.copytree(data_dir / "upgradeable", proj.project_path, dirs_exist_ok=True)
-    operations.create_revision(proj, "Add sampleproject")
+    revisions.create_revision(proj, "Add sampleproject")
     return proj
 
 

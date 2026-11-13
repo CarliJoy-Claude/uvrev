@@ -24,30 +24,23 @@ from uvrev.exceptions import RevisionNotFoundError, ToolError
 
 from . import constants, settings as uvrev_settings
 from .commands import uv
+from .environment import configure_git, create_env, list_projects, mark_created
 from .marker import read_marker
 from .operations import (
     Outcome,
     apply_change,
-    changelog_of,
-    configure_git,
-    create_env,
-    get_last_revision_number,
-    get_python_version,
     list_installed_packages,
-    list_projects,
-    mark_created,
     plan_add,
     plan_remove,
     plan_restore,
     plan_upgrade,
     plan_upgrade_python,
-    python_request,
-    show_history,
     split_missing,
     sync_packages,
 )
 from .parser import absolute_python_request, same_python_request
 from .protection import protect as protect_venv, writable_venv
+from .python import get_python_version, python_request
 from .repair import RepairResult, mark_unprotected, repair
 from .report import (
     SCHEMA_VERSION,
@@ -59,6 +52,7 @@ from .report import (
     VerifyReport,
     VerifySummary,
 )
+from .revisions import changelog_of, get_last_revision_number, show_history
 from .settings import Settings, load_settings
 from .terminal import fatal_error, success, warning
 from .tool import ToolServices, run_tool

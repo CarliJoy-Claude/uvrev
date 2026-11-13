@@ -9,7 +9,7 @@ from conftest import Invoker
 
 from uvrev import constants
 from uvrev.commands import git
-from uvrev.operations import git_identity
+from uvrev.environment import git_identity
 from uvrev.types import UVRevProject
 
 

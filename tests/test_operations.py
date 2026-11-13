@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from uvrev.operations import list_projects
+from uvrev.environment import list_projects
 
 
 class TestListProjects:
