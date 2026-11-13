@@ -34,6 +34,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   unprotected, the permissions are no longer inspected.
 - `uvrev run` neither syncs nor protects an environment that is unprotected.
 - `uvrev unprotect` warns if there are several environments, as they share the files of their packages.
+- `uvrev tool run`: a package specification ending in `.tar.bz2` is a path, like the other archives,
+  instead of the name of a package.
 
 ## [0.6] (2026-11-11)
 

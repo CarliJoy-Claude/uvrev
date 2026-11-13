@@ -22,6 +22,7 @@ from .operations import (
 )
 from .report import (
     SCHEMA_VERSION,
+    Header,
     Option,
     Report,
 )
@@ -193,15 +194,20 @@ def report_command(ctx: click.Context) -> str:
     return " ".join(reversed(names))
 
 
-def report_header(ctx: click.Context, error_message: str | None) -> dict[str, Any]:
+def report_header(ctx: click.Context, error_message: str | None) -> Header:
     """The common fields of a report, as arguments for a CommandReport"""
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "status": "error" if error_message else "success",
-        "command": report_command(ctx),
-        "arguments": report_arguments(ctx),
-        "options": report_options(ctx),
-    }
+    return Header(
+        schema_version=SCHEMA_VERSION,
+        status="error" if error_message else "success",
+        command=report_command(ctx),
+        arguments=report_arguments(ctx),
+        options=report_options(ctx),
+    )
+
+
+def not_fixed(problems: tuple[Problem, ...]) -> str:
+    """The error message for problems of a venv that are left after fixing"""
+    return f"{len(problems)} problem(s) could not be fixed"
 
 
 def change_error_report(ctx: click.Context, message: str) -> Report:
@@ -263,7 +269,7 @@ def report_outcome(outcome: Outcome, as_json: bool, dry_run: bool = False) -> No
         # stdout may contain the JSON report
         echo_problems(outcome.verified.remaining, err=True)
         if outcome.verified.remaining:
-            message = f"{len(outcome.verified.remaining)} problem(s) could not be fixed"
+            message = not_fixed(outcome.verified.remaining)
     if as_json:
         report = Report.from_change(
             report_command(ctx),

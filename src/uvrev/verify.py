@@ -184,14 +184,21 @@ def venv_files(project: UVRevProject) -> Iterator[Path]:
             yield Path(directory, name)
 
 
-def tracked_files(project: UVRevProject) -> Mapping[Path, NormalizedName]:
-    """The files installed by the packages (their RECORD) and their package"""
+def installed_records(
+    project: UVRevProject,
+) -> tuple[tuple[NormalizedName, RecordEntry], ...]:
+    """The RECORD entries of all installed packages, each with its package"""
     site_packages = [str(path) for path in project.site_packages]
-    return {
-        entry.path: canonicalize_name(dist.metadata["Name"])
+    return tuple(
+        (canonicalize_name(dist.metadata["Name"]), entry)
         for dist in distributions(path=site_packages)
         for entry in read_record(dist)
-    }
+    )
+
+
+def tracked_files(project: UVRevProject) -> Mapping[Path, NormalizedName]:
+    """The files installed by the packages (their RECORD) and their package"""
+    return {entry.path: package for package, entry in installed_records(project)}
 
 
 def is_untracked(
@@ -210,25 +217,23 @@ def is_untracked(
 
 def _check_records(project: UVRevProject) -> Iterator[Problem]:
     """Compare the files of all installed packages with their RECORD"""
-    site_packages = project.site_packages
-    for dist in distributions(path=[str(path) for path in site_packages]):
-        package = canonicalize_name(dist.metadata["Name"])
-        for entry in read_record(dist):
-            path = entry.path
-            if entry.algorithm is None or entry.hash is None:
-                # e.g. RECORD itself, nothing to compare
-                continue
-            try:
-                st = path.lstat()
-            except FileNotFoundError:
-                yield Problem("missing", path, package)
-                continue
-            if (entry.size is not None and st.st_size != entry.size) or (
-                file_hash(path, entry.algorithm) != entry.hash
-            ):
-                yield Problem("modified", path, package)
+    records = installed_records(project)
+    for package, entry in records:
+        path = entry.path
+        if entry.algorithm is None or entry.hash is None:
+            # e.g. RECORD itself, nothing to compare
+            continue
+        try:
+            st = path.lstat()
+        except FileNotFoundError:
+            yield Problem("missing", path, package)
+            continue
+        if (entry.size is not None and st.st_size != entry.size) or (
+            file_hash(path, entry.algorithm) != entry.hash
+        ):
+            yield Problem("modified", path, package)
 
-    tracked = tracked_files(project)
+    tracked = {entry.path: package for package, entry in records}
     for path in venv_files(project):
         if is_untracked(project, path, tracked):
             yield Problem("untracked", path)

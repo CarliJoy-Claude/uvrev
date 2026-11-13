@@ -54,6 +54,7 @@ from .reporting import (
     echo_problems,
     get_services,
     get_settings,
+    not_fixed,
     report_header,
     report_outcome,
     verifier,
@@ -643,7 +644,7 @@ def verify_cmd(
     echo_problems(result.remaining, err=as_json)
     message = None
     if result.remaining and fix:
-        message = f"{len(result.remaining)} problem(s) could not be fixed"
+        message = not_fixed(result.remaining)
     elif result.remaining:
         message = (
             f"{len(result.remaining)} problem(s) found, "
