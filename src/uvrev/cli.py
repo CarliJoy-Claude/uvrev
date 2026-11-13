@@ -26,7 +26,8 @@ from . import constants, settings as uvrev_settings
 from .commands import uv
 from .marker import read_marker
 from .operations import (
-    add_packages,
+    Outcome,
+    apply_change,
     changelog_of,
     configure_git,
     create_env,
@@ -35,13 +36,15 @@ from .operations import (
     list_installed_packages,
     list_projects,
     mark_created,
+    plan_add,
+    plan_remove,
+    plan_restore,
+    plan_upgrade,
+    plan_upgrade_python,
     python_request,
-    remove_packages,
-    restore_revision,
     show_history,
+    split_missing,
     sync_packages,
-    upgrade_packages,
-    upgrade_python,
 )
 from .parser import absolute_python_request, same_python_request
 from .protection import protect as protect_venv, writable_venv
@@ -53,7 +56,6 @@ from .report import (
     ProtectReport,
     RepairSummary,
     Report,
-    RevisionChange,
     VerifyReport,
     VerifySummary,
 )
@@ -61,7 +63,7 @@ from .settings import Settings, load_settings
 from .terminal import fatal_error, success, warning
 from .tool import ToolServices, run_tool
 from .types import Revision, SubprocessFailure, UVRevProject
-from .verify import Problem, VerifyResult, verify
+from .verify import Problem, Verifier, VerifyResult, verify
 
 
 def get_base_dir() -> Path:
@@ -89,9 +91,6 @@ def warn_if_incomplete(project: UVRevProject) -> None:
             f" (missing {constants.CREATED_MARKER_FILE})."
             f" Run 'uvrev env fix {project.project_path.name}' if it works."
         )
-
-
-type Verifier = Callable[[UVRevProject, bool], VerifyResult]
 
 
 @dataclass(frozen=True)
@@ -384,60 +383,57 @@ def echo_problems(problems: tuple[Problem, ...], err: bool = False) -> None:
         click.secho(f"❌ {problem}", fg="red", err=err)
 
 
-def run_operation(
-    project: UVRevProject,
-    as_json: bool,
-    verify_after: bool | None,
-    operation: Callable[[], RevisionChange],
-    dry_run: bool = False,
-    repair_first: bool = True,
-) -> RevisionChange:
-    """Run an operation that changes an environment.
+def verifier(project: UVRevProject, verify_after: bool | None) -> Verifier | None:
+    """The service that verifies and fixes the venv after a change.
 
-    An environment that is marked as unprotected (``uvrev unprotect``) is
-    repaired first, unless the operation creates the venv anew anyway
-    (``repair_first``) or nothing may be changed (``dry_run``).
+    Args:
+        project: Project with the settings.
+        verify_after: Value of ``--verify`` / ``--no-verify``, None to use the
+            setting ``verify_after_change``.
 
-    Afterwards the venv is verified and fixed, if requested (``--verify`` or the
-    setting ``verify_after_change``), and the JSON report is printed with --json.
-    Failures of the operation are reported by ReportingCommand.
+    Returns:
+        None if the venv is not to be verified.
+    """
+    if verify_after is None:
+        verify_after = project.settings.verify_after_change
+    return get_services(click.get_current_context()).verify if verify_after else None
 
-    If the venv can not be fixed, the report contains the change (which is
+
+def report_outcome(outcome: Outcome, as_json: bool, dry_run: bool = False) -> None:
+    """Show what a command did to an environment.
+
+    The problems left after verifying the venv are shown and the JSON report
+    is printed with --json. Failures of the command itself are reported by
+    ReportingCommand.
+
+    If the venv could not be fixed, the report contains the change (which is
     done) with status "error" and the program exits with exit code 1.
 
-    In a dry run the operation only predicts the change: the venv is not
-    verified and the changelog of the change is shown instead.
+    In a dry run the changelog of the predicted change is shown instead.
     """
-    repaired = repair(project) if repair_first and not dry_run else None
-    change = operation()
     ctx = click.get_current_context()
     if dry_run:
-        verify_after = False
-        click.echo(changelog_of(change), err=True)
+        click.echo(changelog_of(outcome.change), err=True)
         success("Dry run: nothing was changed.")
-    elif verify_after is None:
-        verify_after = project.settings.verify_after_change
-    result = get_services(ctx).verify(project, True) if verify_after else None
     message = None
-    if result is not None:
+    if outcome.verified is not None:
         # stdout may contain the JSON report
-        echo_problems(result.remaining, err=True)
-        if result.remaining:
-            message = f"{len(result.remaining)} problem(s) could not be fixed"
+        echo_problems(outcome.verified.remaining, err=True)
+        if outcome.verified.remaining:
+            message = f"{len(outcome.verified.remaining)} problem(s) could not be fixed"
     if as_json:
         report = Report.from_change(
             report_command(ctx),
             report_arguments(ctx),
-            change,
+            outcome.change,
             report_options(ctx),
-            result,
+            outcome.verified,
             message,
-            repaired,
+            outcome.repaired,
         )
         click.echo(report.to_json())
     if message:
         fatal_error(message)
-    return change
 
 
 @click.group(cls=UvrevGroup)
@@ -628,15 +624,11 @@ def add(
         uvrev add --python /usr/bin/python3.14 pandas    # ... to this interpreter
         uvrev add --dry-run pandas        # Show what adding pandas would change
     """
-    change = run_operation(
-        project,
-        as_json,
-        verify_after,
-        lambda: add_packages(project, packages, upgrade_all, python, dry_run),
-        dry_run,
-    )
-    if change.created:
-        success(f"Created revision {change.revision}")
+    change = plan_add(packages, upgrade_all, python)
+    outcome = apply_change(project, change, dry_run, verifier(project, verify_after))
+    report_outcome(outcome, as_json, dry_run)
+    if outcome.change.created:
+        success(f"Created revision {outcome.change.revision}")
 
 
 @cli.command(
@@ -668,17 +660,20 @@ def remove(
         uvrev remove pandas
         uvrev remove --ignore-missing pandas numpy   # fine if they are not installed
     """
-    change = run_operation(
-        project,
-        as_json,
-        verify_after,
-        lambda: remove_packages(project, packages, ignore_missing, dry_run),
-        dry_run,
-    )
+    if ignore_missing:
+        packages, missing = split_missing(project, packages)
+        if missing:
+            warning(f"Not a dependency, skipped: {', '.join(missing)}")
+    change = plan_remove(packages)
+    outcome = apply_change(project, change, dry_run, verifier(project, verify_after))
+    report_outcome(outcome, as_json, dry_run)
     if dry_run:
         return
-    if change.created:
-        success(f"Removed {' '.join(packages)}.  Created revision {change.revision}.")
+    if outcome.change.created:
+        success(
+            f"Removed {' '.join(packages)}.  "
+            f"Created revision {outcome.change.revision}."
+        )
     else:
         success("Nothing to remove.")
 
@@ -705,13 +700,8 @@ def sync(
     the cache of uv (all of it) and the virtual environment and installs
     everything again.
     """
-    run_operation(
-        project,
-        as_json,
-        verify_after,
-        lambda: sync_packages(project, clean),
-        repair_first=not clean,
-    )
+    outcome = sync_packages(project, clean, verifier(project, verify_after))
+    report_outcome(outcome, as_json)
     success("Sync complete.")
 
 
@@ -746,23 +736,18 @@ def upgrade(
         uvrev upgrade --python 3.14    # Upgrade all packages and switch to Python 3.14
         uvrev upgrade --python /usr/bin/python3.14    # ... to this interpreter
     """
-    change = run_operation(
-        project,
-        as_json,
-        verify_after,
-        lambda: upgrade_packages(project, packages, dry_run, python),
-        dry_run,
-    )
+    change = plan_upgrade(packages, python)
+    outcome = apply_change(project, change, dry_run, verifier(project, verify_after))
+    report_outcome(outcome, as_json, dry_run)
     if dry_run:
         return
-    if not change.created:
+    revision = outcome.change.revision
+    if not outcome.change.created:
         success("Everything is already up to date.")
     elif packages:
-        success(
-            f"Upgraded {len(packages)} package(s), created revision {change.revision}"
-        )
+        success(f"Upgraded {len(packages)} package(s), created revision {revision}")
     else:
-        success(f"Upgraded all packages, created revision {change.revision}")
+        success(f"Upgraded all packages, created revision {revision}")
 
 
 @cli.command(
@@ -797,19 +782,17 @@ def upgrade_python_cmd(
         uvrev upgrade-python '>=3.13,<3.15'
         uvrev upgrade-python /usr/bin/python3.14    # path of an interpreter
     """
-    change = run_operation(
-        project,
-        as_json,
-        verify_after,
-        lambda: upgrade_python(project, request, dry_run),
-        dry_run,
-    )
+    change = plan_upgrade_python(request)
+    outcome = apply_change(project, change, dry_run, verifier(project, verify_after))
+    report_outcome(outcome, as_json, dry_run)
     if dry_run:
         return
-    if not change.created:
+    if not outcome.change.created:
         success(f"Python {request} is already used.")
     else:
-        success(f"Changed Python to {request}, created revision {change.revision}")
+        success(
+            f"Changed Python to {request}, created revision {outcome.change.revision}"
+        )
 
 
 @cli.command("list")
@@ -834,19 +817,31 @@ def history(project: UVRevProject) -> None:
     click.echo(output)
 
 
-@cli.command(error_report=change_error_report)
+@cli.command(error_report=change_error_report, report_options=("dry_run",))
 @click.argument("revision", type=int)
+@dry_run_option
 @env_option
 @json_option
 @verify_option
 def restore(
-    project: UVRevProject, revision: Revision, as_json: bool, verify_after: bool | None
+    project: UVRevProject,
+    revision: Revision,
+    dry_run: bool,
+    as_json: bool,
+    verify_after: bool | None,
 ) -> None:
-    """Restore project to a specific revision"""
-    run_operation(
-        project, as_json, verify_after, lambda: restore_revision(project, revision)
-    )
-    success(f"Restored to revision {revision}")
+    """Restore project to a specific revision
+
+    \b
+    Examples:
+        uvrev restore 3
+        uvrev restore --dry-run 3    # Show what restoring revision 3 would change
+    """
+    change = plan_restore(revision)
+    outcome = apply_change(project, change, dry_run, verifier(project, verify_after))
+    report_outcome(outcome, as_json, dry_run)
+    if not dry_run:
+        success(f"Restored to revision {revision}")
 
 
 @cli.command()

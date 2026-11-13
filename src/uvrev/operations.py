@@ -4,9 +4,13 @@ Everything that changes the tracked files of an environment (``pyproject.toml``,
 ``uv.lock``, ``.python-version``) and records it as a revision (a git commit
 and a ``rev_<n>`` tag) lives here, with the state comparison it needs.
 
-The functions take a ``UVRevProject`` and return what changed. They do not
-print reports or parse options (``cli.py``) and do not verify or repair the
-venv (``verify.py``, ``repair.py``).
+A change is planned as data (``Change``, built by the ``plan_*`` functions)
+and run by ``apply_change``, so all changes behave the same and can be shown
+as a dry run. ``sync_packages`` only brings the venv in line with the files.
+
+The functions take a ``UVRevProject`` and return what happened (``Outcome``).
+They do not print reports or parse options (``cli.py``). How a venv is
+verified and repaired is in ``verify.py`` and ``repair.py``.
 """
 
 import contextlib
@@ -18,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from importlib.metadata import distributions, version as package_version
 from pathlib import Path
 
@@ -43,13 +48,27 @@ from .parser import (
     same_except_any_version,
 )
 from .protection import unprotect, writable_venv
+from .repair import RepairResult, repair
 from .report import RevisionChange
 from .settings import Settings
-from .terminal import warning
 from .types import Revision, SubprocessFailure, UVRevProject
+from .verify import Verifier, VerifyResult
 
 PYPROJECT_FILE = "pyproject.toml"
 LOCK_FILE = "uv.lock"
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """Everything a command did to an environment"""
+
+    # changes compared to the previous revision
+    change: RevisionChange
+    # repair of the unprotected environment before the change, None if it was
+    # not marked as unprotected
+    repaired: RepairResult | None = None
+    # result of verifying (and fixing) the venv afterwards, None if it did not run
+    verified: VerifyResult | None = None
 
 
 def create_env(
@@ -376,6 +395,12 @@ def get_last_revision_number(project: UVRevProject) -> Revision:
     return Revision(last_rev)
 
 
+def no_change(project: UVRevProject) -> RevisionChange:
+    """The outcome of a command that changed nothing: no new revision"""
+    revision = get_last_revision_number(project)
+    return RevisionChange(revision, revision)
+
+
 def committed_state(project: UVRevProject) -> Mapping[str, str]:
     """Content of the tracked files in the last revision, by file name.
 
@@ -560,44 +585,6 @@ def preview_change(project: UVRevProject, scratch: UVRevProject) -> RevisionChan
     return state_change(old, new, last_rev, last_rev)
 
 
-def restore_revision(project: UVRevProject, rev_num: Revision) -> RevisionChange:
-    """Restore to a specific revision.
-
-    Args:
-        project: Project to restore.
-        rev_num: Revision number to restore to.
-
-    Returns:
-        Changes compared to the previous revision.
-
-    Raises:
-        RevisionNotFoundError: If revision does not exist.
-    """
-    tag_name = f"rev_{rev_num}"
-
-    # Check if tag exists
-    try:
-        git("rev-parse", tag_name, project=project, capture_output=True)
-    except SubprocessFailure:
-        raise RevisionNotFoundError(f"Revision {rev_num} does not exist") from None
-
-    # Checkout files from that revision (the exact Python version is not
-    # restored, it is recorded again from the recreated virtual environment)
-    restored = committed_files(
-        project,
-        tag_name,
-        (project.pyproject_path, project.lock_path, project.python_version_path),
-    )
-    git("checkout", tag_name, "--", *restored, project=project)
-
-    # Install the restored state, this recreates the virtual environment if the
-    # Python version changed. Only then the used interpreter can be compared.
-    sync_or_reset(project, "--locked")
-
-    # Create new revision for the restore
-    return create_revision(project, f"Restored to revision {rev_num}")
-
-
 @contextlib.contextmanager
 def reset_on_failure(project: UVRevProject) -> Iterator[None]:
     """Reset the files to the last revision, if a command fails.
@@ -620,17 +607,6 @@ def reset_on_failure(project: UVRevProject) -> Iterator[None]:
         raise
 
 
-def sync_or_reset(project: UVRevProject, *args: str) -> None:
-    """Run ``uv sync``, on failure reset the files to the last revision.
-
-    Args:
-        project: Project to sync.
-        *args: Additional arguments for ``uv sync``.
-    """
-    with reset_on_failure(project), writable_venv(project):
-        uv("sync", *args, project=project)
-
-
 def list_installed_packages(
     project: UVRevProject,
 ) -> tuple[tuple[NormalizedName, Version, bool], ...]:
@@ -650,58 +626,6 @@ def list_installed_packages(
         (pkg, version, pkg in pyproject_deps)
         for pkg, version in sorted(all_packages.items())
     )
-
-
-def sync_or_lock(project: UVRevProject, sync: bool, *args: str) -> None:
-    """Run ``uv sync``, or ``uv lock`` to leave the venv untouched (dry run)"""
-    uv("sync" if sync else "lock", *args, project=project)
-
-
-def add_packages(
-    project: UVRevProject,
-    packages: tuple[str, ...],
-    upgrade_all: bool = False,
-    python: str | None = None,
-    dry_run: bool = False,
-) -> RevisionChange:
-    """Add packages to project.
-
-    If a command fails, the files are reset to the last revision.
-
-    Args:
-        project: Project to add packages to.
-        packages: Requirements to add. A requirement without version
-            (``six``) replaces an existing constraint (``six==1.15``).
-        upgrade_all: Add with ``uv add --upgrade`` (so a package needing newer
-            versions of locked packages can be added) and run ``uv sync --upgrade``
-            afterwards, so everything is upgraded.
-        python: Python request (a version, range, implementation or the path
-            of an interpreter), pinned before the packages are added
-            (see ``apply_change``).
-        dry_run: Only report what would change.
-
-    Returns:
-        Changes compared to the previous revision.
-    """
-
-    def add(target: UVRevProject, sync: bool) -> str:
-        uv(
-            "add",
-            "--raw",
-            *(() if sync else ("--no-sync",)),
-            *(("--upgrade",) if upgrade_all else ()),
-            # uv keeps an existing constraint for a bare name, so a requirement
-            # without version is given as "any version"
-            *(any_version(package) for package in packages),
-            project=target,
-        )
-        message = f"Added: {', '.join(packages)}"
-        if upgrade_all:
-            sync_or_lock(target, sync, "--upgrade")
-            message += "; upgraded all packages"
-        return message
-
-    return apply_change(project, add, dry_run, python)
 
 
 def python_request(project: UVRevProject) -> str | None:
@@ -754,55 +678,6 @@ def python_message(
     return f"{action} Python: {old_version} → {new_version} (pinned {request})"
 
 
-def apply_change(
-    project: UVRevProject,
-    change: Callable[[UVRevProject, bool], str],
-    dry_run: bool,
-    python: str | None = None,
-) -> RevisionChange:
-    """Apply a change to the environment and create a revision.
-
-    All changes run the same steps, so they behave the same:
-
-    1. ``tool.uv.environments`` is updated, otherwise uv might fail to resolve.
-    2. The Python request is pinned with ``uv python pin`` (if given), which
-       accepts versions, ranges, implementations and paths and checks them
-       against ``requires-python``. uv uses the pin for the following commands.
-    3. The uv commands of the change run.
-
-    Args:
-        project: Project to change.
-        change: Runs the uv commands in the given project and returns the
-            message of the revision. Its second argument tells whether the
-            venv is synced, otherwise only the files may be changed.
-        dry_run: Apply the change to a scratch copy and only report it.
-        python: Python request to pin before the change, e.g. ``3.14``,
-            ``>=3.13,<3.15``, ``cpython-3.14`` or ``/usr/bin/python3.14``.
-
-    Returns:
-        Changes compared to the previous revision.
-    """
-
-    def run(target: UVRevProject, sync: bool) -> str:
-        update_environments(target)
-        if python:
-            uv("python", "pin", python, project=target)
-        return change(target, sync)
-
-    if dry_run:
-        with scratch_copy(project) as scratch:
-            run(scratch, False)
-            return preview_change(project, scratch)
-    before = (python_request(project), get_python_version(project))
-    with reset_on_failure(project), writable_venv(project):
-        message = run(project, True)
-    after = (python_request(project), get_python_version(project))
-    parts = (message, python_message(python, before, after))
-    # a change that only pins Python has no message of its own
-    message = "; ".join(filter(None, parts)) or f"Pinned Python {python}"
-    return create_revision(project, message)
-
-
 def split_missing(
     project: UVRevProject, packages: tuple[str, ...]
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -817,39 +692,6 @@ def split_missing(
     present = tuple(p for p in packages if canonicalize_name(p) in dependencies)
     missing = tuple(p for p in packages if canonicalize_name(p) not in dependencies)
     return present, missing
-
-
-def remove_packages(
-    project: UVRevProject,
-    packages: tuple[str, ...],
-    ignore_missing: bool = False,
-    dry_run: bool = False,
-) -> RevisionChange:
-    """Remove packages from project.
-
-    Args:
-        project: Project to remove packages from.
-        packages: Package names to remove.
-        ignore_missing: Skip packages that are no dependencies of the project
-            instead of failing. If none is left, nothing is changed.
-        dry_run: Only report what would change.
-
-    Returns:
-        Changes compared to the previous revision.
-    """
-    if ignore_missing:
-        packages, missing = split_missing(project, packages)
-        if missing:
-            warning(f"Not a dependency, skipped: {', '.join(missing)}")
-        if not packages:
-            last_rev = get_last_revision_number(project)
-            return RevisionChange(last_rev, last_rev)
-
-    def remove(target: UVRevProject, sync: bool) -> str:
-        uv("remove", *(() if sync else ("--no-sync",)), *packages, project=target)
-        return f"Removed: {', '.join(packages)}"
-
-    return apply_change(project, remove, dry_run)
 
 
 def list_venv_packages(project: UVRevProject) -> Mapping[NormalizedName, Version]:
@@ -868,7 +710,9 @@ def list_venv_packages(project: UVRevProject) -> Mapping[NormalizedName, Version
     }
 
 
-def sync_packages(project: UVRevProject, clean: bool = False) -> RevisionChange:
+def sync_packages(
+    project: UVRevProject, clean: bool = False, verify: Verifier | None = None
+) -> Outcome:
     """Sync the virtual environment with the lock file.
 
     As the lock file is not changed, no revision is created.
@@ -880,11 +724,14 @@ def sync_packages(project: UVRevProject, clean: bool = False) -> RevisionChange:
             This is the way out if the environment can not be repaired
             (it is no longer marked as unprotected afterwards). Running
             processes of the environment lose their files.
+        verify: Verifies and fixes the venv afterwards, None to skip.
 
     Returns:
-        Changes of the installed packages (the versions, so a clean sync of
-        an intact environment reports no changes).
+        What was done. The change contains the installed packages (their
+        versions, so a clean sync of an intact environment reports no changes).
     """
+    # a clean sync creates the venv anew, so there is nothing to repair
+    repaired = None if clean else repair(project)
     installed_before = list_venv_packages(project)
     python_before = get_python_version(project)
     if clean:
@@ -900,7 +747,7 @@ def sync_packages(project: UVRevProject, clean: bool = False) -> RevisionChange:
         remove_marker(project.unprotected_marker_path)
     python_after = get_python_version(project)
     rev = get_last_revision_number(project)
-    return RevisionChange(
+    change = RevisionChange(
         rev,
         rev,
         Diff(installed_before, list_venv_packages(project)),
@@ -909,6 +756,7 @@ def sync_packages(project: UVRevProject, clean: bool = False) -> RevisionChange:
             {canonicalize_name("python"): python_after} if python_after else {},
         ),
     )
+    return Outcome(change, repaired, verify(project, True) if verify else None)
 
 
 def show_history(project: UVRevProject) -> str:
@@ -931,60 +779,269 @@ def show_history(project: UVRevProject) -> str:
     )
 
 
-def upgrade_packages(
-    project: UVRevProject,
-    packages: tuple[str, ...],
-    dry_run: bool = False,
-    python: str | None = None,
-) -> RevisionChange:
-    """Upgrade packages or all if no packages specified.
+type UvCall = tuple[str, ...]
 
-    Args:
-        project: Project to upgrade packages in.
-        packages: Package names to upgrade (empty for all).
-        dry_run: Only report what would change.
-        python: Python request (a version, range, implementation or the path
-            of an interpreter), pinned before the packages are upgraded
-            (see ``apply_change``).
 
-    Returns:
-        Changes compared to the previous revision.
+@dataclass(frozen=True)
+class Change:
+    """What a command does to the files of an environment, as data.
+
+    It only describes the change, ``apply_change`` runs it.
     """
 
-    def upgrade(target: UVRevProject, sync: bool) -> str:
-        if packages:
-            for pkg in packages:
-                sync_or_lock(target, sync, "--upgrade-package", pkg)
-            return f"Upgraded: {', '.join(packages)}"
-        sync_or_lock(target, sync, "--upgrade")
-        return "Upgraded all packages"
+    # uv commands as they run for real (a dry run translates them)
+    uv_calls: tuple[UvCall, ...] = ()
+    # message of the revision, empty if the change only pins Python
+    message: str = ""
+    # Python request to pin before the uv calls, e.g. ``3.14``, ``>=3.13,<3.15``,
+    # ``cpython-3.14`` or ``/usr/bin/python3.14``
+    python: str | None = None
+    # take the files from this revision before the uv calls
+    restore_from: Revision | None = None
 
-    return apply_change(project, upgrade, dry_run, python)
+    @property
+    def is_empty(self) -> bool:
+        """True if there is nothing to do
+
+        >>> Change().is_empty, Change(python="3.14").is_empty
+        (True, False)
+        """
+        return not self.uv_calls and not self.python
 
 
-def upgrade_python(
-    project: UVRevProject, request: str, dry_run: bool = False
-) -> RevisionChange:
-    """Change the Python of the environment without upgrading packages.
-
-    Pins the request with ``uv python pin`` (see ``apply_change``) and syncs,
-    which recreates the virtual environment and updates ``uv.lock`` if needed.
-    ``requires-python`` is not changed, so downgrades are possible as well.
-    If uv fails, the files are reset to the last revision.
+def plan_add(
+    packages: tuple[str, ...], upgrade_all: bool = False, python: str | None = None
+) -> Change:
+    """Plan adding packages.
 
     Args:
-        project: Project to change the Python of.
+        packages: Requirements to add. A requirement without version
+            (``six``) replaces an existing constraint (``six==1.15``).
+        upgrade_all: Add with ``uv add --upgrade`` (so a package needing newer
+            versions of locked packages can be added) and run ``uv sync --upgrade``
+            afterwards, so everything is upgraded.
+        python: Python request, pinned before the packages are added.
+
+    Examples:
+        >>> plan_add(("six", "numpy>=2")).uv_calls
+        (('add', '--raw', 'six>=0', 'numpy>=2'),)
+        >>> change = plan_add(("six",), upgrade_all=True, python="3.14")
+        >>> change.uv_calls
+        (('add', '--raw', '--upgrade', 'six>=0'), ('sync', '--upgrade'))
+        >>> change.message, change.python
+        ('Added: six; upgraded all packages', '3.14')
+    """
+    # uv keeps an existing constraint for a bare name, so a requirement
+    # without version is given as "any version"
+    requirements = tuple(any_version(package) for package in packages)
+    message = f"Added: {', '.join(packages)}"
+    if not upgrade_all:
+        return Change((("add", "--raw", *requirements),), message, python)
+    return Change(
+        (("add", "--raw", "--upgrade", *requirements), ("sync", "--upgrade")),
+        f"{message}; upgraded all packages",
+        python,
+    )
+
+
+def plan_remove(packages: tuple[str, ...]) -> Change:
+    """Plan removing packages, nothing is done if there are none.
+
+    >>> plan_remove(("six", "numpy"))
+    Change(uv_calls=(('remove', 'six', 'numpy'),), message='Removed: six, numpy', python=None, restore_from=None)
+    >>> plan_remove(()).is_empty
+    True
+    """
+    if not packages:
+        return Change()
+    return Change((("remove", *packages),), f"Removed: {', '.join(packages)}")
+
+
+def plan_upgrade(packages: tuple[str, ...], python: str | None = None) -> Change:
+    """Plan upgrading the given packages, or all if none is given.
+
+    Args:
+        packages: Package names to upgrade (empty for all).
+        python: Python request, pinned before the packages are upgraded.
+
+    Examples:
+        >>> plan_upgrade(())
+        Change(uv_calls=(('sync', '--upgrade'),), message='Upgraded all packages', python=None, restore_from=None)
+        >>> change = plan_upgrade(("six", "numpy"), "3.14")
+        >>> change.uv_calls
+        (('sync', '--upgrade-package', 'six'), ('sync', '--upgrade-package', 'numpy'))
+        >>> change.message, change.python
+        ('Upgraded: six, numpy', '3.14')
+    """
+    if not packages:
+        return Change((("sync", "--upgrade"),), "Upgraded all packages", python)
+    calls = tuple(("sync", "--upgrade-package", package) for package in packages)
+    return Change(calls, f"Upgraded: {', '.join(packages)}", python)
+
+
+def plan_upgrade_python(request: str) -> Change:
+    """Plan changing the Python of the environment without upgrading packages.
+
+    The request is pinned and the environment synced, which recreates the
+    virtual environment and updates ``uv.lock`` if needed.
+    ``requires-python`` is not changed, so downgrades are possible as well.
+
+    Args:
         request: Python request, everything ``uv python pin`` accepts
             (e.g. ``3.14``, ``3.14.1``, ``>=3.13,<3.15``, ``cpython-3.14`` or
             the path of an interpreter like ``/usr/bin/python3.14``).
-        dry_run: Only report what would change.
+
+    Examples:
+        >>> plan_upgrade_python("3.14")
+        Change(uv_calls=(('sync',),), message='', python='3.14', restore_from=None)
+    """
+    return Change((("sync",),), python=request)
+
+
+def plan_restore(revision: Revision) -> Change:
+    """Plan restoring the files of a revision and installing them.
+
+    The sync recreates the virtual environment if the Python version changed.
+
+    >>> change = plan_restore(Revision(3))
+    >>> change.uv_calls, change.message, change.restore_from
+    ((('sync', '--locked'),), 'Restored to revision 3', 3)
+    """
+    return Change(
+        (("sync", "--locked"),),
+        f"Restored to revision {revision}",
+        restore_from=revision,
+    )
+
+
+def dry_run_call(call: UvCall) -> UvCall:
+    """The uv call of a dry run: it only changes the files, never the venv.
+
+    >>> dry_run_call(("add", "--raw", "six>=0"))
+    ('add', '--no-sync', '--raw', 'six>=0')
+    >>> dry_run_call(("remove", "six"))
+    ('remove', '--no-sync', 'six')
+    >>> dry_run_call(("sync", "--upgrade"))
+    ('lock', '--upgrade')
+    >>> dry_run_call(("sync", "--locked"))
+    ('lock', '--check')
+    """
+    command, *args = call
+    if command == "sync":
+        # uv lock has no --locked, --check fails as well if uv.lock is outdated
+        return ("lock", *("--check" if arg == "--locked" else arg for arg in args))
+    return (command, "--no-sync", *args)
+
+
+def restore_files(
+    project: UVRevProject, target: UVRevProject, revision: Revision
+) -> None:
+    """Write the files of a revision of the project into the target.
+
+    The exact Python version is not restored, it is recorded again from the
+    recreated virtual environment.
+
+    Args:
+        project: Project with the revisions.
+        target: The project itself, or its scratch copy in a dry run.
+        revision: Revision to take the files from.
+
+    Raises:
+        RevisionNotFoundError: If the revision does not exist.
+    """
+    tag_name = f"rev_{revision}"
+    try:
+        git("rev-parse", tag_name, project=project, capture_output=True)
+    except SubprocessFailure:
+        raise RevisionNotFoundError(f"Revision {revision} does not exist") from None
+    paths = (project.pyproject_path, project.lock_path, project.python_version_path)
+    for name in committed_files(project, tag_name, paths):
+        content = git(
+            "show", f"{tag_name}:{name}", project=project, capture_output=True
+        )
+        target.project_path.joinpath(name).write_text(content)
+
+
+def run_steps(
+    project: UVRevProject, target: UVRevProject, change: Change, dry_run: bool
+) -> None:
+    """Run the steps of a change. All changes run the same, so they behave the same:
+
+    1. The files of a revision are restored (if asked for). Otherwise
+       ``tool.uv.environments`` is updated, as uv might fail to resolve without.
+       A restored revision keeps its environments, so it is resolved as before.
+    2. The Python request is pinned with ``uv python pin`` (if given), which
+       accepts versions, ranges, implementations and paths and checks them
+       against ``requires-python``. uv uses the pin for the following commands.
+    3. The uv commands of the change run.
+
+    Args:
+        project: Project to change.
+        target: Where the steps run: the project itself, or its scratch copy
+            in a dry run.
+        change: The planned change.
+        dry_run: Only the files may be changed, see ``dry_run_call``.
+    """
+    if change.restore_from is not None:
+        restore_files(project, target, change.restore_from)
+    else:
+        update_environments(target)
+    if change.python:
+        uv("python", "pin", change.python, project=target)
+    for call in change.uv_calls:
+        uv(*(dry_run_call(call) if dry_run else call), project=target)
+
+
+def preview(project: UVRevProject, change: Change) -> RevisionChange:
+    """What a change would do: it runs in a scratch copy of the environment"""
+    if change.is_empty:
+        return no_change(project)
+    with scratch_copy(project) as scratch:
+        run_steps(project, scratch, change, dry_run=True)
+        return preview_change(project, scratch)
+
+
+def commit(project: UVRevProject, change: Change) -> RevisionChange:
+    """Run a change in the environment and create a revision.
+
+    If a command fails, the files are reset to the last revision.
+    """
+    if change.is_empty:
+        return no_change(project)
+    before = (python_request(project), get_python_version(project))
+    with reset_on_failure(project), writable_venv(project):
+        run_steps(project, project, change, dry_run=False)
+    after = (python_request(project), get_python_version(project))
+    parts = (change.message, python_message(change.python, before, after))
+    # a change that only pins Python has no message of its own
+    message = "; ".join(filter(None, parts)) or f"Pinned Python {change.python}"
+    return create_revision(project, message)
+
+
+def apply_change(
+    project: UVRevProject,
+    change: Change,
+    dry_run: bool = False,
+    verify: Verifier | None = None,
+) -> Outcome:
+    """Apply a planned change to the environment and create a revision.
+
+    An environment that is marked as unprotected (``uvrev unprotect``) is
+    repaired first. Afterwards the venv is verified and fixed, if asked for.
+
+    Args:
+        project: Project to change.
+        change: The planned change, see the ``plan_*`` functions.
+        dry_run: Only predict the change in a scratch copy: the environment is
+            not touched, so nothing is repaired or verified and no revision is
+            created.
+        verify: Verifies and fixes the venv afterwards, None to skip.
 
     Returns:
-        Changes compared to the previous revision.
+        What was done.
     """
-
-    def sync_only(target: UVRevProject, sync: bool) -> str:
-        sync_or_lock(target, sync)
-        return ""
-
-    return apply_change(project, sync_only, dry_run, request)
+    if dry_run:
+        return Outcome(preview(project, change))
+    repaired = repair(project)
+    revision_change = commit(project, change)
+    return Outcome(revision_change, repaired, verify(project, True) if verify else None)

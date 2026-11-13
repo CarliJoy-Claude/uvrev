@@ -253,6 +253,10 @@ class VerifyResult:
     fixed: bool = False
 
 
+# verify(project, fix) of a venv, so callers and tests can give another one
+type Verifier = Callable[[UVRevProject, bool], VerifyResult]
+
+
 def find_problems(project: UVRevProject) -> tuple[Problem, ...]:
     """Find all deviations of the venv from the installed packages and uv.lock"""
     problems = list(_check_records(project))

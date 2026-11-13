@@ -288,12 +288,13 @@ All package names are [normalized](https://packaging.python.org/en/latest/specif
 
 ### Dry run
 
-`add`, `remove`, `upgrade` and `upgrade-python` accept `--dry-run` (e.g. for the check mode of Ansible).
+`add`, `remove`, `upgrade`, `upgrade-python` and `restore` accept `--dry-run` (e.g. for the check mode of Ansible).
 It reports what the command would change, without touching the environment, its files or its revisions:
 
 ```bash
 uvrev upgrade --dry-run          # shows the changelog the upgrade would have
 uvrev add --dry-run --json six   # the same report as without --dry-run
+uvrev restore --dry-run 3        # shows what restoring revision 3 would change
 ```
 
 The report is the one of the real command, with these differences:

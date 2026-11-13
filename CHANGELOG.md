@@ -17,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - If the time of unprotecting is unknown, every file is compared with its hash instead.
   - If a file of the virtual environment itself was changed, the repair fails and asks for `uvrev sync --clean`.
 - `uvrev sync --clean`: deletes the complete uv cache and the `.venv` and installs everything again.
+- `uvrev restore --dry-run`: reports what restoring a revision would change, like the other commands.
+  The JSON report of `restore` contains `dry_run` in `options`.
 - JSON reports (`schema_version` stays 2):
   - change reports and `protect`: `repair` (`mode`, `packages`, `removed_files`), `null` if nothing was repaired.
   - `unprotect`: `state` (`post-chmod` or `forced`).

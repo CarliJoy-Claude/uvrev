@@ -119,7 +119,7 @@ class TestAdd:
         assert data["changes"] == {**NO_CHANGES, "added": ["six"]}
         assert data["dependency_changes"] == {**NO_CHANGES, "added": ["six"]}
         assert data["versions"]["dependencies"] == {"six": {"old": None, "new": ""}}
-        assert "uv add --raw --no-sync 'six>=0'" in result.stderr
+        assert "uv add --no-sync --raw 'six>=0'" in result.stderr
         assert "Created revision" not in result.stderr
         assert snapshot(project) == before
 
@@ -131,7 +131,7 @@ class TestAdd:
         data = report(result)
         assert data["changes"]["added"] == ["six"]
         assert data["changes"]["updated"] == ["peppercorn", "sampleproject"]
-        assert "uv add --raw --no-sync --upgrade 'six>=0'" in result.stderr
+        assert "uv add --no-sync --raw --upgrade 'six>=0'" in result.stderr
         assert "uv lock --upgrade" in result.stderr
         assert snapshot(project) == before
 
@@ -192,6 +192,46 @@ class TestRemove:
         data = report(result)
         assert data["changes"] == NO_CHANGES
         assert "uv remove" not in result.stderr
+
+
+class TestRestore:
+    def test_restore(self, invoke: Invoker, project: UVRevProject) -> None:
+        before = snapshot(project)
+
+        result = invoke("restore", "0", "--dry-run", "--json")
+
+        data = report(result)
+        assert data["arguments"] == ["0"]
+        assert data["options"] == {"dry_run": True}
+        assert data["changes"]["removed"] == ["peppercorn", "sampleproject"]
+        assert data["dependency_changes"]["removed"] == ["sampleproject"]
+        # uv.lock of the revision is only checked, nothing is installed
+        assert "uv lock --check" in result.stderr
+        assert "uv sync" not in result.stderr
+        assert "Restored" not in result.stderr
+        assert snapshot(project) == before
+
+    def test_outdated_lock(self, invoke: Invoker, project: UVRevProject) -> None:
+        """The dry run fails like the restore: uv.lock of the test data is outdated"""
+        before = snapshot(project)
+
+        result = invoke("restore", "1", "--dry-run", "--json")
+
+        assert result.exit_code == 1
+        assert json.loads(result.stdout)["status"] == "error"
+        assert "uv lock --check" in result.stderr
+        assert snapshot(project) == before
+
+    def test_unknown_revision(self, invoke: Invoker, project: UVRevProject) -> None:
+        before = snapshot(project)
+
+        result = invoke("restore", "99", "--dry-run", "--json")
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert data["status"] == "error"
+        assert data["error_message"] == "Revision 99 does not exist"
+        assert snapshot(project) == before
 
 
 class TestUpgradePython:

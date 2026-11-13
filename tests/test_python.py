@@ -246,7 +246,8 @@ class TestUpgradePython:
         current = pinned(project)
         project.python_version_path.unlink()
 
-        change = operations.upgrade_python(project, current)
+        plan = operations.plan_upgrade_python(current)
+        change = operations.apply_change(project, plan).change
 
         # the file is recreated with the same content
         assert not change.created

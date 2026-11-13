@@ -61,9 +61,13 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
 - Errors found while parsing options (unknown `--env`, invalid settings) are
   stored in `ctx.meta` and raised when the command is invoked, so they are
   reported as well. Usage errors (exit code 2) print no report.
-- A command that changes the files of an environment goes through
-  `apply_change()` in `operations.py`, which also gives it `--dry-run`
-  (the change runs in a scratch copy with `--no-sync` / `uv lock`).
+- A command that changes the files of an environment is planned as data:
+  a pure `plan_*()` function in `operations.py` returns a `Change` (the uv
+  calls, the message of the revision), `apply_change()` runs it and returns
+  an `Outcome`. This also gives the command `--dry-run`: the change runs in a
+  scratch copy, translated by `dry_run_call()` (`--no-sync`, `uv lock`).
+  The cli shows the `Outcome` with `report_outcome()`.
+  `sync` does not change the files, so `sync_packages()` is its own function.
 - Import cycle to keep in mind: `types` imports `settings`, `commands` imports
   `types`. So `settings` must not import `commands`.
 
@@ -164,7 +168,7 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
 - Python: `.python-version` holds a *request* (everything `uv python pin`
   accepts: version, range, implementation, path), never parse it as a version.
   Compare interpreters with `get_python_version()`. `add --python`,
-  `upgrade --python` and `upgrade-python` share the pin step in `apply_change()`
+  `upgrade --python` and `upgrade-python` share the pin step in `run_steps()`
   (pin first, then the command's uv call). `env create` pins the request too.
 - uv runs in the folder of the environment (a dry run in a temporary copy), not
   in the working directory of the user: paths given by the user must be made
