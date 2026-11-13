@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.7] (2026-11-13)
 
 ### Added
 
@@ -18,11 +18,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - If a file of the virtual environment itself was changed, the repair fails and asks for `uvrev sync --clean`.
 - `uvrev sync --clean`: deletes the complete uv cache and the `.venv` and installs everything again.
 - `uvrev restore --dry-run`: reports what restoring a revision would change, like the other commands.
-  The JSON report of `restore` contains `dry_run` in `options`.
 - JSON reports (`schema_version` stays 2):
   - change reports and `protect`: `repair` (`mode`, `packages`, `removed_files`), `null` if nothing was repaired.
   - `unprotect`: `state` (`post-chmod` or `forced`).
   - `sync`: `options` contains `clean`.
+  - `restore`: `options` contains `dry_run`.
 
 ### Changed
 
@@ -42,6 +42,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - uv could not lock a protected `.venv`, as it opens `.venv/.lock` for writing. It went on without the lock
   (e.g. the check of `uvrev run`), so it could read a `.venv` that another uv was changing.
   The lock file now stays writable for the owner, everything else is read-only as before.
+- The help of `uvrev verify` said that files no package installed are only reported.
 
 ## [0.6] (2026-11-11)
 
@@ -252,7 +253,7 @@ First real release.
 - `uvrev history` shows the revisions and `uvrev restore` goes back to a previous one.
 - `uvrev path` shows the location of an environment.
 
-[Unreleased]: https://gitlab.com/Kound/uvrev/-/compare/0.6...main
+[0.7]: https://gitlab.com/Kound/uvrev/-/compare/0.6...0.7
 [0.6]: https://gitlab.com/Kound/uvrev/-/compare/0.5...0.6
 [0.5]: https://gitlab.com/Kound/uvrev/-/compare/0.4...0.5
 [0.4]: https://gitlab.com/Kound/uvrev/-/compare/0.3...0.4
