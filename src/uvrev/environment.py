@@ -35,9 +35,9 @@ from .types import UVRevProject
 def create_env(
     base_dir: Path,
     name: str,
+    settings: Settings,
     python: str | None = None,
     force: bool = False,
-    settings: Settings | None = None,
 ) -> UVRevProject:
     """Create a new UV project with revision tracking.
 
@@ -47,12 +47,12 @@ def create_env(
     Args:
         base_dir: Base directory to create project in.
         name: Name of the project.
+        settings: Settings of uvrev.
         python: Python request (a version, range, implementation or the path
             of an interpreter), None to let uv choose its default.
             uv pins it in ``.python-version``.
         force: Delete the folder of the environment first, if it was not
             created successfully (no ``.uvrev_created_successfully``).
-        settings: Settings of uvrev (defaults if not given).
 
     Returns:
         Created UVRevProject instance.
@@ -62,7 +62,7 @@ def create_env(
             created successfully and ``force`` is not given.
     """
     target = base_dir.joinpath(name)
-    project = UVRevProject(target, settings or Settings())
+    project = UVRevProject(target, settings)
     if project.created_successfully():
         return project
     if target.exists():

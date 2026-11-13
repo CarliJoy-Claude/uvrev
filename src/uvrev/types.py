@@ -1,19 +1,22 @@
 """Basic types used by all modules: the project of an environment and its paths.
 
 ``UVRevProject`` knows where the files of an environment are, not what is in
-them. Also home of ``Revision``.
+them. This module only imports ``constants`` of uvrev. Also home of ``Revision``.
 """
 
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NewType
+from typing import TYPE_CHECKING, NewType
 
 from packaging.requirements import Requirement
 from packaging.utils import NormalizedName, canonicalize_name
 
 from . import constants
-from .settings import Settings
+
+if TYPE_CHECKING:
+    # only for type checkers: this module must only import constants of uvrev
+    from .settings import Settings
 
 Revision = NewType("Revision", int)
 
@@ -23,7 +26,8 @@ class UVRevProject:
     """Represents a UV project with revision tracking"""
 
     project_path: Path
-    settings: Settings = field(default_factory=Settings, compare=False)
+    # always the loaded settings: the caller does not have to know who uses them
+    settings: "Settings" = field(compare=False)
 
     @property
     def pyproject_path(self) -> Path:
@@ -98,8 +102,9 @@ class UVRevProject:
         Check if project exists
 
         >>> import tempfile
+        >>> from uvrev.settings import Settings
         >>> with tempfile.TemporaryDirectory() as td:
-        ...     p = UVRevProject(Path(td))
+        ...     p = UVRevProject(Path(td), Settings())
         ...     p.exists()
         False
         """

@@ -713,14 +713,13 @@ class ToolServices:
 def ensure_environment(
     request: ToolRequest,
     refresh: bool,
-    settings: Settings | None = None,
+    settings: Settings,
     services: ToolServices | None = None,
 ) -> Path:
     """Get the directory of a complete environment, build it if necessary.
 
     The venv of the tool is protected like the venvs of the environments.
     """
-    settings = settings or Settings()
     services = services or ToolServices()
     directory = tool_directory(request)
     if not refresh and has_receipt(directory, request):
@@ -779,7 +778,7 @@ def run_tool(
     extras: Sequence[str],
     python: str | None,
     refresh: bool,
-    settings: Settings | None = None,
+    settings: Settings,
     services: ToolServices | None = None,
 ) -> int:
     """Install the tool with its locked dependencies and run it.

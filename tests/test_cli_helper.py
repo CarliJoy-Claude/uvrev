@@ -6,12 +6,13 @@ import pytest
 
 from uvrev import constants
 from uvrev.options import env_option_callback, get_base_dir
+from uvrev.settings import Settings
 from uvrev.types import UVRevProject
 
 
 def create_fake_env(path: Path, is_package: bool = False) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    proj = UVRevProject(path)
+    proj = UVRevProject(path, Settings())
     proj.lock_path.touch()
     if not is_package:
         proj.pyproject_path.write_text("[tool.uv]\npackage = false\n")

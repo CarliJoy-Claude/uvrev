@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from uvrev.settings import Settings
 from uvrev.types import NormalizedRequirement, UVRevProject
 
 
@@ -11,7 +12,7 @@ class TestUVRevProject:
     # Directory doesn't exist
     def test_not_exists_no_directory(self) -> None:
         """Non-existent directory."""
-        project = UVRevProject(Path("/nonexistent/path"))
+        project = UVRevProject(Path("/nonexistent/path"), Settings())
 
         assert not project.exists()
 
@@ -21,7 +22,7 @@ class TestUVRevProject:
         project_dir = tmp_path / "project"
         project_dir.mkdir()
 
-        project = UVRevProject(project_dir)
+        project = UVRevProject(project_dir, Settings())
 
         assert not project.exists()
 
@@ -31,7 +32,7 @@ class TestUVRevProject:
         project_dir = tmp_path / "testproject"
         project_dir.mkdir()
         (project_dir / "pyproject.toml").write_text("[tool.uv]\npackage = false\n")
-        proj = UVRevProject(project_dir)
+        proj = UVRevProject(project_dir, Settings())
 
         assert proj.exists() is True
 
@@ -39,7 +40,7 @@ class TestUVRevProject:
     def test_properties(self, tmp_path: Path) -> None:
         """Properties return correct paths."""
         project_dir = tmp_path / "myproject"
-        project = UVRevProject(project_dir)
+        project = UVRevProject(project_dir, Settings())
 
         assert project.pyproject_path == project_dir / "pyproject.toml"
         assert project.lock_path == project_dir / "uv.lock"

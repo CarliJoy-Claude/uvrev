@@ -20,7 +20,7 @@ class TestFailing:
         [pytest.param(commands.git, id="git"), pytest.param(commands.uv, id="uv")],
     )
     def test_fail(self, cmd: Command, tmp_path: Path) -> None:
-        proj = UVRevProject(tmp_path)
+        proj = UVRevProject(tmp_path, Settings())
         with pytest.raises(SubprocessFailure):
             cmd("not-a-valid-command", project=proj)
 
@@ -51,7 +51,7 @@ class TestUV:
     ) -> None:
         """A really activated other venv does not change the project's venv"""
         monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "other" / ".venv"))
-        project = UVRevProject(tmp_path)
+        project = UVRevProject(tmp_path, Settings())
 
         output = uv("--version", project=project, capture_output=True)
 

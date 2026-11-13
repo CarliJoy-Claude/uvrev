@@ -13,7 +13,7 @@ from uvrev.cli import cli
 from uvrev.commands import git, uv
 from uvrev.exceptions import CommandNotFoundError
 from uvrev.reporting import Services
-from uvrev.settings import installed_python_versions, load_settings
+from uvrev.settings import Settings, installed_python_versions, load_settings
 from uvrev.types import UVRevProject
 from uvrev.verify import VerifyResult
 
@@ -136,7 +136,7 @@ class TestMissingCommand:
         assert installed_python_versions("uvrev-test-missing-uv") == ()
 
     def test_missing_directory_is_no_missing_command(self, tmp_path: Path) -> None:
-        project = UVRevProject(tmp_path / "missing")
+        project = UVRevProject(tmp_path / "missing", Settings())
 
         with pytest.raises(FileNotFoundError):
             git("status", project=project)

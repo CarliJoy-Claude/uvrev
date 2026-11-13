@@ -2,7 +2,6 @@
 
 Loaded with typed-settings from the ``[uvrev]`` table of the config file, the
 files in ``UVREV_SETTINGS`` and ``UVREV_*`` environment variables.
-This module must not import ``commands`` (import cycle through ``types``).
 Its constants and the location of the config file are in ``constants.py``.
 """
 

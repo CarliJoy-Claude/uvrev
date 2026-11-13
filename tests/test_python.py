@@ -16,6 +16,7 @@ from uvrev.exceptions import SubprocessFailure
 from uvrev.interpreter import get_python_version
 from uvrev.io import read_pyproject
 from uvrev.protection import unprotect
+from uvrev.settings import Settings
 from uvrev.types import UVRevProject
 
 
@@ -43,7 +44,7 @@ def two_pythons() -> tuple[str, str]:
 @pytest.fixture
 def project(fake_basedir: Path) -> UVRevProject:
     """Freshly created project (revision 0)"""
-    return environment.create_env(fake_basedir, constants.DEFAULT_ENV)
+    return environment.create_env(fake_basedir, constants.DEFAULT_ENV, Settings())
 
 
 def pinned(proj: UVRevProject) -> str:
@@ -154,17 +155,19 @@ class TestPythonLock:
 
     def test_create_with_python(self, fake_basedir: Path) -> None:
         """The given Python version is pinned"""
-        version = get_python_version(environment.create_env(fake_basedir, "default"))
+        version = get_python_version(
+            environment.create_env(fake_basedir, "default", Settings())
+        )
         assert version is not None
         minor = f"{version.major}.{version.minor}"
 
         result = invoke("env", "create", "pinned", "--python", minor)
 
         assert result.exit_code == 0, result.output
-        assert pinned(UVRevProject(fake_basedir / "pinned")) == minor
+        assert pinned(UVRevProject(fake_basedir / "pinned", Settings())) == minor
 
     def test_broken_interpreter(self, tmp_path: Path) -> None:
-        proj = UVRevProject(tmp_path)
+        proj = UVRevProject(tmp_path, Settings())
         python = proj.venv_path / "bin" / "python"
         python.parent.mkdir(parents=True)
         python.write_text("#!/bin/sh\nexit 1\n")
@@ -298,7 +301,7 @@ class TestUpgradePython:
 
     def test_upgrade_and_restore(self, fake_basedir: Path) -> None:
         old_pinned, version = two_pythons()
-        project = environment.create_env(fake_basedir, "two", old_pinned)
+        project = environment.create_env(fake_basedir, "two", Settings(), old_pinned)
         old_python = python_version(project)
         requires_python = read_pyproject(project)["project"]["requires-python"]
 
@@ -345,7 +348,7 @@ class TestUpgradePython:
     def test_below_requires_python(self, fake_basedir: Path) -> None:
         """uv python pin refuses versions not matching requires-python"""
         old, new = two_pythons()
-        project = environment.create_env(fake_basedir, "two", new)
+        project = environment.create_env(fake_basedir, "two", Settings(), new)
 
         result = invoke("upgrade-python", "-e", "two", old, "--json")
 
@@ -385,7 +388,7 @@ class TestAddPython:
     def test_add_with_python(self, fake_basedir: Path) -> None:
         """uv python pin pins the version, uv add installs it"""
         old, new = two_pythons()
-        project = environment.create_env(fake_basedir, "two", old)
+        project = environment.create_env(fake_basedir, "two", Settings(), old)
         old_python = python_version(project)
         requires_python = read_pyproject(project)["project"]["requires-python"]
 
@@ -413,7 +416,7 @@ class TestAddPython:
     def test_add_with_python_below_requires_python(self, fake_basedir: Path) -> None:
         """uv refuses the version, the files are not changed"""
         old, new = two_pythons()
-        project = environment.create_env(fake_basedir, "two", new)
+        project = environment.create_env(fake_basedir, "two", Settings(), new)
 
         result = invoke("add", "-e", "two", "--python", old, "peppercorn")
 
@@ -489,7 +492,7 @@ class TestUpgradeWithPython:
 
     def test_other_python(self, fake_basedir: Path) -> None:
         old, new = two_pythons()
-        project = environment.create_env(fake_basedir, "two", old)
+        project = environment.create_env(fake_basedir, "two", Settings(), old)
         old_python = python_version(project)
 
         result = invoke("upgrade", "-e", "two", "--python", new, "--json")
@@ -597,7 +600,7 @@ class TestInterpreterPath:
         report: dict[str, Any] = json.loads(result.stdout)
         assert report["python_request"] == str(interpreter)
         assert report["python"] == python_version(project)
-        created = UVRevProject(fake_basedir / "byPath")
+        created = UVRevProject(fake_basedir / "byPath", Settings())
         assert pinned(created) == str(interpreter)
         status = git("status", "--porcelain", project=created, capture_output=True)
         assert status == ""

@@ -35,6 +35,7 @@ from .options import (
     env_option,
     get_base_dir,
     json_option,
+    named_project,
     python_request_callback,
     verify_option,
 )
@@ -54,6 +55,7 @@ from .reporting import (
     echo_problems,
     get_services,
     get_settings,
+    get_settings_or_defaults,
     not_fixed,
     report_header,
     report_outcome,
@@ -84,8 +86,10 @@ def env() -> None:
 def env_create_report(
     ctx: click.Context, created: bool, error_message: str | None = None
 ) -> EnvCreateReport:
+    # also the report of a failure, which may be that the settings are invalid
     project = UVRevProject(
-        get_base_dir() / (ctx.params.get("name") or constants.DEFAULT_ENV)
+        get_base_dir() / (ctx.params.get("name") or constants.DEFAULT_ENV),
+        get_settings_or_defaults(ctx),
     )
     version = get_python_version(project)
     return EnvCreateReport(
@@ -144,10 +148,10 @@ def env_create(
     versions before 0.4. Run 'uvrev env fix NAME' for those first.
     """
     project_name = name or constants.DEFAULT_ENV
-    project = UVRevProject(get_base_dir() / project_name)
+    project = named_project(ctx, name)
     created = not project.created_successfully()
     if created:
-        create_env(get_base_dir(), project_name, python, force, get_settings(ctx))
+        create_env(get_base_dir(), project_name, project.settings, python, force)
         success(f"Project '{project_name}' created at {project.project_path}")
     else:
         success(f"Project '{project_name}' already exists at {project.project_path}")
@@ -174,7 +178,7 @@ def env_fix(name: str | None) -> None:
     'uvrev env create' does (identity of uvrev, no signing).
     """
     project_name = name or constants.DEFAULT_ENV
-    project = UVRevProject(get_base_dir() / project_name)
+    project = named_project(click.get_current_context(), name)
     if not project.exists():
         fatal_error(f"Project '{project_name}' does not exist")
     if (project.project_path / ".git" / "HEAD").is_file():
@@ -198,8 +202,9 @@ def env_list() -> None:
         return
 
     click.echo("Projects:")
+    ctx = click.get_current_context()
     for proj in projects:
-        incomplete = not UVRevProject(get_base_dir() / proj).created_successfully()
+        incomplete = not named_project(ctx, proj).created_successfully()
         click.echo(
             f"  • {proj}"
             + (constants.INCOMPLETE_HINT.format(name=proj) if incomplete else "")

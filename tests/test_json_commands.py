@@ -13,7 +13,7 @@ from uvrev import constants
 from uvrev.cli import cli
 from uvrev.protection import unprotect
 from uvrev.reporting import Services
-from uvrev.settings import load_settings
+from uvrev.settings import Settings, load_settings
 from uvrev.types import UVRevProject
 from uvrev.verify import Problem, VerifyResult
 
@@ -40,7 +40,7 @@ class TestEnvCreate:
     def test_created(self, invoke: Invoker, fake_basedir: Path) -> None:
         result = invoke("env", "create", "--json")
 
-        project = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
+        project = UVRevProject(fake_basedir / constants.DEFAULT_ENV, Settings())
         pinned = project.python_version_path.read_text().strip()
         exact = project.python_lock_path.read_text().strip()
         assert report(result) == {

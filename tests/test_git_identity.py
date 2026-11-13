@@ -10,6 +10,7 @@ from conftest import Invoker
 from uvrev import constants
 from uvrev.commands import git
 from uvrev.environment import git_identity
+from uvrev.settings import Settings
 from uvrev.types import UVRevProject
 
 
@@ -49,7 +50,7 @@ def test_create_and_change(
     result = invoke("env", "create")
 
     assert result.exit_code == 0, result.output
-    project = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
+    project = UVRevProject(fake_basedir / constants.DEFAULT_ENV, Settings())
     assert config(project, "user.name") == "uvrev"
     assert config(project, "user.email") == git_identity()
     assert config(project, "commit.gpgsign") == "false"
@@ -76,7 +77,7 @@ def test_create_and_change(
 def test_fix(invoke: Invoker, fake_basedir: Path) -> None:
     """env fix configures environments created by an older uvrev"""
     assert invoke("env", "create").exit_code == 0
-    project = UVRevProject(fake_basedir / constants.DEFAULT_ENV)
+    project = UVRevProject(fake_basedir / constants.DEFAULT_ENV, Settings())
     for key in ("user.name", "user.email", "commit.gpgsign", "tag.gpgsign"):
         git("config", "--local", "--unset", key, project=project)
 

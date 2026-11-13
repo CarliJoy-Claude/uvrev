@@ -21,7 +21,7 @@ def mode(path: Path) -> int:
 @pytest.fixture
 def project(tmp_path: Path) -> UVRevProject:
     """A project with a fake venv: a file, a script and a symlink to an outside file"""
-    project = UVRevProject(tmp_path / "project")
+    project = UVRevProject(tmp_path / "project", Settings())
     venv = project.venv_path
     (venv / "lib").mkdir(parents=True)
     (venv / "bin").mkdir()
@@ -176,7 +176,7 @@ class TestWritableVenv:
 
     def test_venv_created_within(self, tmp_path: Path) -> None:
         """uv may create the venv within the block, it is protected anyway"""
-        project = UVRevProject(tmp_path)
+        project = UVRevProject(tmp_path, Settings())
 
         with writable_venv(project):
             project.venv_path.mkdir()

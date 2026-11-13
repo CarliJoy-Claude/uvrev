@@ -16,7 +16,7 @@ from platformdirs import user_data_path
 
 from . import constants
 from .parser import absolute_python_request
-from .reporting import get_settings
+from .reporting import get_settings, get_settings_or_defaults
 from .terminal import warning
 from .types import UVRevProject
 
@@ -43,6 +43,13 @@ def warn_if_incomplete(project: UVRevProject) -> None:
             f" (missing {constants.CREATED_MARKER_FILE})."
             f" Run 'uvrev env fix {project.project_path.name}' if it works."
         )
+
+
+def named_project(ctx: click.Context | None, name: str | None) -> UVRevProject:
+    """The environment with the given name (default: ``base``), existing or not"""
+    return UVRevProject(
+        get_base_dir() / (name or constants.DEFAULT_ENV), get_settings(ctx)
+    )
 
 
 def find_project(
@@ -83,7 +90,10 @@ def env_option_callback(
             raise
         # raised by ReportingCommand.invoke, the command is not executed
         ctx.meta[constants.DEFERRED_ERROR] = e
-        return UVRevProject(Path(value or constants.DEFAULT_ENV))
+        # a placeholder: the command is not executed, only its failure reported
+        return UVRevProject(
+            Path(value or constants.DEFAULT_ENV), get_settings_or_defaults(ctx)
+        )
 
 
 def env_option[F: Callable[..., Any]](f: F) -> F:

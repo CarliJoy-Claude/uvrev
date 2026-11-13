@@ -68,6 +68,18 @@ def get_settings(ctx: click.Context | None) -> Settings:
     return get_services(ctx).settings
 
 
+def get_settings_or_defaults(ctx: click.Context | None) -> Settings:
+    """Settings for the report of a failure, which may be that they are invalid.
+
+    Only for what is shown about a failed command (e.g. the path of the
+    environment): the command itself always gets the loaded settings.
+    """
+    try:
+        return get_settings(ctx)
+    except click.ClickException:
+        return Settings()
+
+
 def load_valid_settings() -> Settings:
     """Load the settings.
 

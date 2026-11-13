@@ -74,14 +74,18 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
 - `constants.py` and `exceptions.py` import nothing of uvrev and must stay
   that way (`tests/test_layers.py`). An exception gets what it needs as an
   argument, or imports late within a method (`terminal` in `UvrevError.show`).
-  `types` only imports `constants` and `settings` (the default of
-  `UVRevProject.settings`): keep it that small.
-- Import cycles to keep in mind: `commands` imports `types`, which imports
-  `settings`. So `settings` must not import `commands`.
-  `report` imports `revisions`, `operations` imports both: so `revisions` must
-  not import `report`, and `report` must not import `operations`.
-- The modules from bottom to top: `constants`, `exceptions`, `settings`,
-  `terminal`, `types`, `commands`, then the domain (`parser`, `differ`,
+  `types.py` only imports `constants` (`Settings` only for type checkers).
+  The same test checks this.
+- `UVRevProject.settings` has no default: a project always gets the loaded
+  settings (`get_settings(ctx)`, `named_project()` in `options.py`), so no
+  caller has to know whether a function uses them. Only the report of a
+  failure may fall back to the defaults (`get_settings_or_defaults()`), as
+  the failure can be that the settings are invalid.
+- Import cycle to keep in mind: `report` imports `revisions`, `operations`
+  imports both. So `revisions` must not import `report`, and `report` must
+  not import `operations`.
+- The modules from bottom to top: `constants`, `exceptions`, `types`,
+  `settings`, `terminal`, `commands`, then the domain (`parser`, `differ`,
   `io`, `marker`, `protection`, `verify`, `repair`, `interpreter`, `revisions`,
   `environment`, `operations`, `tool`), then `report`, `reporting`,
   `options` and `cli`.

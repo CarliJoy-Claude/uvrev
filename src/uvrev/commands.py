@@ -121,8 +121,9 @@ def git(*args: str, project: UVRevProject, capture_output: bool = False) -> str:
 def uv_environ(project: UVRevProject, environ: Mapping[str, str]) -> dict[str, str]:
     """Environment variables for uv commands of a project
 
+    >>> from uvrev.settings import Settings
     >>> env = uv_environ(
-    ...     UVRevProject(Path("/project")),
+    ...     UVRevProject(Path("/project"), Settings()),
     ...     {"VIRTUAL_ENV": "/home/user/.venv", "UV_PYTHON": "3.8", "KEEP_ME": "IN"},
     ... )
     >>> sorted(env.items())

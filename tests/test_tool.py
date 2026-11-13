@@ -483,7 +483,9 @@ class TestEnvironment:
             raise AssertionError("must not build")
 
         services = ToolServices(lock=lock_held_by_parallel_run, build=fail)
-        directory = ensure_environment(REQUEST, refresh=False, services=services)
+        directory = ensure_environment(
+            REQUEST, refresh=False, settings=Settings(), services=services
+        )
         assert directory == tool_directory(REQUEST)
 
     def test_failed_build_is_removed(self) -> None:
@@ -495,7 +497,10 @@ class TestEnvironment:
 
         with pytest.raises(KeyboardInterrupt):
             ensure_environment(
-                REQUEST, refresh=False, services=ToolServices(build=interrupted)
+                REQUEST,
+                refresh=False,
+                settings=Settings(),
+                services=ToolServices(build=interrupted),
             )
         assert not tool_directory(REQUEST).exists()
 
@@ -539,7 +544,7 @@ class TestRunTool:
     @pytest.mark.parametrize("command", ["", "bin/tool", "..\\tool"])
     def test_invalid_command(self, command: str) -> None:
         with pytest.raises(ToolError, match="COMMAND must be the name"):
-            run_tool(command, (), "my-tool==1.0", (), None, False)
+            run_tool(command, (), "my-tool==1.0", (), None, False, Settings())
 
     def test_cli_error(self) -> None:
         result = CliRunner().invoke(cli, args=("tool", "run", "./tool"))

@@ -98,7 +98,8 @@ def read_record(dist: Distribution) -> tuple[RecordEntry, ...]:
 def is_venv_file(project: UVRevProject, path: Path) -> bool:
     """True for the files a venv consists of itself (see ``constants.VENV_ROOT_FILES``).
 
-    >>> project = UVRevProject(Path("/env"))
+    >>> from uvrev.settings import Settings
+    >>> project = UVRevProject(Path("/env"), Settings())
     >>> is_venv_file(project, Path("/env/.venv/pyvenv.cfg"))
     True
     >>> is_venv_file(project, Path("/env/.venv/bin/python3.14"))

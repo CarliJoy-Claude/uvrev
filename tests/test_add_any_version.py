@@ -12,13 +12,14 @@ from uvrev import constants
 from uvrev.commands import git, uv
 from uvrev.io import read_pyproject, write_pyproject
 from uvrev.parser import any_version, parse_pyproject_deps
+from uvrev.settings import Settings
 from uvrev.types import UVRevProject
 
 
 @pytest.fixture
 def project(invoke: Invoker, fake_basedir: Path) -> UVRevProject:
     assert invoke("env", "create").exit_code == 0
-    return UVRevProject(fake_basedir / constants.DEFAULT_ENV)
+    return UVRevProject(fake_basedir / constants.DEFAULT_ENV, Settings())
 
 
 def dependencies(project: UVRevProject) -> list[str]:
