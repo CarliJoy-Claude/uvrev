@@ -19,7 +19,7 @@ from packaging.version import Version
 from . import constants
 from .commands import git
 from .differ import Diff, create_changelog
-from .exceptions import RevisionNotFoundError
+from .exceptions import RevisionNotFoundError, SubprocessFailure
 from .parser import (
     parse_pyproject_deps,
     parse_python_lock,
@@ -29,7 +29,7 @@ from .parser import (
     same_except_any_version,
 )
 from .python import preview_python, update_python_lock
-from .types import Revision, SubprocessFailure, UVRevProject
+from .types import Revision, UVRevProject
 
 PYPROJECT_FILE = "pyproject.toml"
 LOCK_FILE = "uv.lock"

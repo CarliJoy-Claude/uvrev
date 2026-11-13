@@ -5,8 +5,9 @@ import pytest
 
 from uvrev import commands
 from uvrev.commands import uv, uv_environ
+from uvrev.exceptions import SubprocessFailure
 from uvrev.settings import Settings
-from uvrev.types import SubprocessFailure, UVRevProject
+from uvrev.types import UVRevProject
 
 
 class Command(Protocol):

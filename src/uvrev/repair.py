@@ -18,6 +18,7 @@ import click
 from packaging.utils import NormalizedName
 
 from . import constants
+from .exceptions import VenvChangedError
 from .io import exclude_from_git
 from .marker import (
     Marker,
@@ -44,18 +45,6 @@ from .verify import (
 # Files of the venv itself that uv creates or rewrites while using the venv
 # (e.g. its lock). A change of them is harmless.
 VOLATILE_VENV_FILES: Final[frozenset[str]] = frozenset(VENV_ROOT_FILES - {"pyvenv.cfg"})
-
-
-class VenvChangedError(click.ClickException):
-    """A file of the venv itself was changed, it can not be repaired in place"""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        super().__init__(
-            f"{path} was changed or is missing. It belongs to the virtual "
-            "environment itself and is not part of a package, so it can not be "
-            "restored. Run 'uvrev sync --clean' to create the environment anew."
-        )
 
 
 @dataclass(frozen=True)

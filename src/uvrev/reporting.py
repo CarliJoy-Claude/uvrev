@@ -17,8 +17,6 @@ from typing import Any, NoReturn, Protocol
 import click
 from typed_settings.exceptions import TsError
 
-from uvrev.exceptions import RevisionNotFoundError
-
 from .operations import (
     Outcome,
 )
@@ -97,10 +95,6 @@ type ErrorReporter = Callable[[click.Context, str], JsonReport]
 DEFERRED_ERROR = "uvrev.deferred_error"
 
 
-# failures with a message for the user, everything else is a bug
-KNOWN_ERRORS = (click.ClickException, RevisionNotFoundError, FileExistsError)
-
-
 class ReportingCommand(click.Command):
     """Command that reports every failure.
 
@@ -127,7 +121,8 @@ class ReportingCommand(click.Command):
     def invoke(self, ctx: click.Context) -> Any:
         try:
             return self.invoke_command(ctx)
-        except KNOWN_ERRORS as e:
+        except click.ClickException as e:
+            # a failure with a message for the user
             self.fail(ctx, e)
         except Exception as e:
             # a bug: still report it, the traceback is shown as usual
@@ -153,16 +148,12 @@ class ReportingCommand(click.Command):
         click.echo(self.error_report(ctx, message).to_json())
         return True
 
-    def fail(self, ctx: click.Context, e: Exception) -> NoReturn:
-        if isinstance(e, click.ClickException):
-            message = e.format_message()
-            if not self.echo_error_report(ctx, message):
-                # shown by click, with the exit code of the exception
-                raise e
-        else:
-            message = str(e)
-            self.echo_error_report(ctx, message)
-        fatal_error(message)
+    def fail(self, ctx: click.Context, e: click.ClickException) -> NoReturn:
+        message = e.format_message()
+        if self.echo_error_report(ctx, message):
+            fatal_error(message)
+        # shown by click, with the exit code of the exception
+        raise e
 
 
 class UvrevGroup(click.Group):

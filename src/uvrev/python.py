@@ -13,7 +13,8 @@ from pathlib import Path
 from packaging.version import Version
 
 from .commands import uv
-from .types import SubprocessFailure, UVRevProject
+from .exceptions import SubprocessFailure
+from .types import UVRevProject
 
 # Prints the version of the running interpreter, PEP 440 compatible
 # (platform.python_version() can be e.g. "3.15.0a1+" which is no valid version)

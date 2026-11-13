@@ -42,11 +42,10 @@ from packaging.version import Version
 from platformdirs import user_cache_path
 
 from .commands import UvRunner, show_cmd, uv_tool
-from .exceptions import ToolError
+from .exceptions import SubprocessFailure, ToolError
 from .protection import writable
 from .settings import Settings
 from .terminal import warning
-from .types import SubprocessFailure
 
 RECEIPT_NAME: Final[str] = "uvrev-receipt.json"
 EXTRA_METADATA: Final[str] = "extra_metadata"

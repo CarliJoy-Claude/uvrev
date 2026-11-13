@@ -17,7 +17,8 @@ from typing import Literal, Protocol, overload
 
 import click
 
-from uvrev.types import SubprocessFailure, UVRevProject
+from .exceptions import CommandNotFoundError, SubprocessFailure
+from .types import UVRevProject
 
 # stdout of internal commands is redirected here, so uvrev's stdout stays parseable
 STDERR_FD = 2
@@ -30,17 +31,6 @@ def show_cmd(cmd: tuple[str, ...]) -> None:
         + click.style(shlex.join(cmd), fg="magenta"),
         err=True,
     )
-
-
-class CommandNotFoundError(click.ClickException):
-    """A command uvrev needs (uv, git) is not installed"""
-
-    def __init__(self, command: str) -> None:
-        self.command = command
-        super().__init__(
-            f"The '{command}' command was not found. "
-            f"uvrev needs {command}, install it and make sure it is on the PATH."
-        )
 
 
 @contextmanager

@@ -6,9 +6,10 @@ import pytest
 from conftest import Invoker, writable_paths
 
 from uvrev.commands import uv
-from uvrev.protection import ChmodNotFoundError, protect, unprotect, writable_venv
+from uvrev.exceptions import ChmodNotFoundError, SubprocessFailure
+from uvrev.protection import protect, unprotect, writable_venv
 from uvrev.settings import Settings
-from uvrev.types import SubprocessFailure, UVRevProject
+from uvrev.types import UVRevProject
 
 
 def mode(path: Path) -> int:

@@ -1,17 +1,14 @@
 """Basic types used by all modules: the project of an environment and its paths.
 
 ``UVRevProject`` knows where the files of an environment are, not what is in
-them. Also home of ``Revision`` and ``SubprocessFailure``.
+them. Also home of ``Revision``.
 """
 
-import shlex
-import subprocess
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NewType
 
-import click
 from packaging.requirements import Requirement
 from packaging.utils import NormalizedName, canonicalize_name
 
@@ -110,15 +107,3 @@ class NormalizedRequirement(Requirement):
     def __init__(self, requirement_string: str):
         super().__init__(requirement_string)
         self.name = canonicalize_name(self.name)
-
-
-class SubprocessFailure(click.ClickException):
-    """
-    SubprocessFailure Exception that will quit the program without stacktrace
-    """
-
-    def __init__(self, error: subprocess.CalledProcessError) -> None:
-        if isinstance(error.cmd, tuple):  # pragma: no branch
-            error.cmd = shlex.join(error.cmd)
-        self.error = error
-        super().__init__(str(error))

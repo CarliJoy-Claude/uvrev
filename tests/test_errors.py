@@ -10,7 +10,8 @@ from click.testing import CliRunner, Result
 from conftest import Invoker
 
 from uvrev.cli import cli
-from uvrev.commands import CommandNotFoundError, git, uv
+from uvrev.commands import git, uv
+from uvrev.exceptions import CommandNotFoundError
 from uvrev.reporting import Services
 from uvrev.settings import installed_python_versions, load_settings
 from uvrev.types import UVRevProject

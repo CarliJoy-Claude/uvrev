@@ -22,9 +22,10 @@ from typing import Final, Literal
 from packaging.utils import NormalizedName, canonicalize_name
 
 from .commands import STDERR_FD, show_cmd, uv
+from .exceptions import SubprocessFailure
 from .marker import remove_marker
 from .protection import writable_venv
-from .types import SubprocessFailure, UVRevProject
+from .types import UVRevProject
 
 type ProblemKind = Literal["missing", "modified", "not_synced", "untracked"]
 

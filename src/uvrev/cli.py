@@ -13,11 +13,10 @@ import sys
 
 import click
 
-from uvrev.exceptions import ToolError
-
 from . import constants, settings as uvrev_settings
 from .commands import uv
 from .environment import configure_git, create_env, list_projects, mark_created
+from .exceptions import SubprocessFailure
 from .marker import read_marker
 from .operations import (
     apply_change,
@@ -62,7 +61,7 @@ from .reporting import (
 from .revisions import show_history
 from .terminal import fatal_error, success, warning
 from .tool import run_tool
-from .types import Revision, SubprocessFailure, UVRevProject
+from .types import Revision, UVRevProject
 from .verify import VerifyResult
 
 INCOMPLETE_HINT = " (not created successfully, run 'uvrev env fix {name}' if it works)"
@@ -723,17 +722,14 @@ def tool_run(
         uvrev tool run --from mytool==1.2 --extra fast mytool-cli -v
         uvrev tool run --from ./dist/mytool-1.2-py3-none-any.whl mytool
     """
-    try:
-        exit_code = run_tool(
-            command,
-            args,
-            from_spec,
-            extras,
-            python,
-            refresh,
-            get_settings(click.get_current_context()),
-            get_services(click.get_current_context()).tool,
-        )
-    except ToolError as e:
-        fatal_error(str(e))
+    exit_code = run_tool(
+        command,
+        args,
+        from_spec,
+        extras,
+        python,
+        refresh,
+        get_settings(click.get_current_context()),
+        get_services(click.get_current_context()).tool,
+    )
     sys.exit(exit_code)

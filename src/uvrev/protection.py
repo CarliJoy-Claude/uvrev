@@ -12,26 +12,10 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-import click
-
-from . import settings as uvrev_settings
 from .commands import run_cmd
+from .exceptions import ChmodNotFoundError
 from .settings import Settings
 from .types import UVRevProject
-
-
-class ChmodNotFoundError(click.ClickException):
-    """Protection is enabled, but there is no chmod to change the permissions"""
-
-    def __init__(self, command: str) -> None:
-        super().__init__(
-            f"Protecting the .venv is enabled, but the '{command}' command was not "
-            "found. "
-            "It is needed to change the permissions of the .venv. "
-            "Install it, or disable the protection with 'protect = false' in the "
-            f"[uvrev] table of {uvrev_settings.config_file()} "
-            "or the environment variable UVREV_PROTECT=false."
-        )
 
 
 def chmod(venv: Path, mode: str, command: str) -> None:

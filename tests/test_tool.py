@@ -17,7 +17,7 @@ from packaging.version import Version
 
 from uvrev.cli import cli
 from uvrev.commands import UvRunner, uv_tool
-from uvrev.exceptions import ToolError
+from uvrev.exceptions import SubprocessFailure, ToolError
 from uvrev.settings import Settings
 from uvrev.tool import (
     RECEIPT_NAME,
@@ -42,7 +42,6 @@ from uvrev.tool import (
     tool_request,
     uv_environment,
 )
-from uvrev.types import SubprocessFailure
 
 SHA = "ab" * 32
 NAME = NormalizedName("my-tool")

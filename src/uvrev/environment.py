@@ -21,6 +21,7 @@ from packaging.version import Version
 
 from . import constants
 from .commands import git, uv
+from .exceptions import EnvironmentExistsError
 from .io import exclude_from_git, read_pyproject, write_pyproject
 from .parser import (
     parse_uv_environments,
@@ -57,7 +58,7 @@ def create_env(
         Created UVRevProject instance.
 
     Raises:
-        FileExistsError: If the folder exists but the environment was not
+        EnvironmentExistsError: If the folder exists but the environment was not
             created successfully and ``force`` is not given.
     """
     target = base_dir.joinpath(name)
@@ -66,7 +67,7 @@ def create_env(
         return project
     if target.exists():
         if not force:
-            raise FileExistsError(
+            raise EnvironmentExistsError(
                 f"Folder for project '{name}' ({target}) already exists, "
                 "but the environment was not created successfully. "
                 f"Use 'uvrev env fix {name}' if it is a working environment "
