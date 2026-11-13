@@ -16,6 +16,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import NormalizedName, canonicalize_name
 from packaging.version import Version
 
+from . import constants
 from .types import NormalizedRequirement
 
 # "any version": how a requirement without version is given to uv, as uv keeps
@@ -229,7 +230,7 @@ def parse_python_lock(content: str) -> Mapping[NormalizedName, Version]:
     """
     if not (version := content.strip()):
         return {}
-    return {canonicalize_name("python"): Version(version)}
+    return {constants.PYTHON_NAME: Version(version)}
 
 
 def absolute_python_request(request: str, cwd: Path) -> str:
@@ -299,7 +300,7 @@ def parse_python_request(content: str) -> Mapping[NormalizedName, str]:
     """
     if not (request := content.strip()):
         return {}
-    return {canonicalize_name("python"): request}
+    return {constants.PYTHON_NAME: request}
 
 
 def parse_uv_environments(toml_content: str) -> Mapping[NormalizedName, None]:

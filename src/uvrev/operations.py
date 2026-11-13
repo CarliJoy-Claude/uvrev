@@ -23,6 +23,7 @@ from pathlib import Path
 from packaging.utils import NormalizedName, canonicalize_name
 from packaging.version import Version
 
+from . import constants
 from .commands import uv
 from .differ import Diff
 from .environment import update_environments
@@ -223,11 +224,7 @@ def scratch_copy(project: UVRevProject) -> Iterator[UVRevProject]:
     (without syncing) while the environment stays untouched.
     """
     with tempfile.TemporaryDirectory(prefix="uvrev-dry-run-") as directory:
-        for path in (
-            project.pyproject_path,
-            project.lock_path,
-            project.python_version_path,
-        ):
+        for path in project.source_paths:
             if path.exists():
                 shutil.copy2(path, directory)
         yield UVRevProject(Path(directory), project.settings)
@@ -376,8 +373,8 @@ def sync_packages(
         rev,
         Diff(installed_before, list_venv_packages(project)),
         python=Diff(
-            {canonicalize_name("python"): python_before} if python_before else {},
-            {canonicalize_name("python"): python_after} if python_after else {},
+            {constants.PYTHON_NAME: python_before} if python_before else {},
+            {constants.PYTHON_NAME: python_after} if python_after else {},
         ),
     )
     return Outcome(change, repaired, verify(project, True) if verify else None)

@@ -10,9 +10,10 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Final, Literal, Self
 
-from packaging.utils import NormalizedName, canonicalize_name
+from packaging.utils import NormalizedName
 from packaging.version import Version
 
+from . import constants
 from .differ import Changes, Diff, Names, VersionChange
 from .repair import RepairResult
 from .revisions import RevisionChange
@@ -79,7 +80,7 @@ class VerifySummary:
     """Result of verifying a venv, as shown in the reports
 
     >>> from pathlib import Path
-    >>> problem = Problem("modified", Path("a.py"), canonicalize_name("pkg"))
+    >>> problem = Problem("modified", Path("a.py"), NormalizedName("pkg"))
     >>> summary = VerifySummary.from_result(VerifyResult((problem,), (), fixed=True))
     >>> summary.problems
     (ProblemEntry(kind='modified', path='a.py', package='pkg', is_warning=False),)
@@ -108,7 +109,7 @@ class RepairSummary:
     """Repair of an unprotected environment, as shown in the reports
 
     >>> from pathlib import Path
-    >>> result = RepairResult("fast", (canonicalize_name("six"),), (Path("x.py"),))
+    >>> result = RepairResult("fast", (NormalizedName("six"),), (Path("x.py"),))
     >>> RepairSummary.from_result(result)
     RepairSummary(mode='fast', packages=('six',), removed_files=('x.py',))
     >>> RepairSummary.from_result(None) is None
@@ -228,10 +229,8 @@ class Report:
                 packages=change.packages.versions(),
                 dependencies=change.dependencies.versions(),
             ),
-            python=change.python.versions().get(canonicalize_name("python")),
-            python_request=change.python_request.versions().get(
-                canonicalize_name("python")
-            ),
+            python=change.python.versions().get(constants.PYTHON_NAME),
+            python_request=change.python_request.versions().get(constants.PYTHON_NAME),
             environments=EnvironmentsChange.from_diff(change.environments),
             repair=RepairSummary.from_result(repair),
             verify=VerifySummary.from_result(verify) if verify else None,

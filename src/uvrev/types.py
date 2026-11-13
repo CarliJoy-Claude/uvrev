@@ -27,11 +27,11 @@ class UVRevProject:
 
     @property
     def pyproject_path(self) -> Path:
-        return self.project_path / "pyproject.toml"
+        return self.project_path / constants.PYPROJECT_FILE
 
     @property
     def lock_path(self) -> Path:
-        return self.project_path / "uv.lock"
+        return self.project_path / constants.LOCK_FILE
 
     @property
     def python_version_path(self) -> Path:
@@ -42,6 +42,16 @@ class UVRevProject:
     def python_lock_path(self) -> Path:
         """Exact version of the Python interpreter of the environment"""
         return self.project_path / constants.PYTHON_VERSION_LOCK_FILE
+
+    @property
+    def source_paths(self) -> tuple[Path, ...]:
+        """The files that define the environment, changed by uv and uvrev"""
+        return (self.pyproject_path, self.lock_path, self.python_version_path)
+
+    @property
+    def tracked_paths(self) -> tuple[Path, ...]:
+        """The files whose state is tracked in the revisions"""
+        return (*self.source_paths, self.python_lock_path)
 
     @property
     def venv_path(self) -> Path:

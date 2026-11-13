@@ -247,5 +247,5 @@ def list_projects(base_dir: Path) -> tuple[str, ...]:
     return tuple(
         p.name
         for p in base_dir.iterdir()
-        if p.is_dir() and (p / "pyproject.toml").exists()
+        if p.is_dir() and (p / constants.PYPROJECT_FILE).exists()
     )

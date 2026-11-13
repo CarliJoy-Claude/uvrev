@@ -43,6 +43,7 @@ from platformdirs import user_cache_path
 
 from .commands import UvRunner, show_cmd, uv_tool
 from .exceptions import SubprocessFailure, ToolError
+from .parser import ARCHIVE_SUFFIXES
 from .protection import writable
 from .settings import Settings
 from .terminal import warning
@@ -60,7 +61,6 @@ DYNAMIC_NEEDS_SOURCE: Final[tuple[str, ...]] = (
     "optional-dependencies",
     "requires-python",
 )
-ARCHIVE_SUFFIXES: Final[tuple[str, ...]] = (".whl", ".zip", ".tar.gz", ".tgz")
 # connect, read, write and pool timeout of each operation, not of the whole download
 DOWNLOAD_TIMEOUT: Final[httpx2.Timeout] = httpx2.Timeout(30.0)
 SHA256_HEX_LENGTH: Final[int] = 64

@@ -31,9 +31,6 @@ from .parser import (
 from .python import preview_python, update_python_lock
 from .types import Revision, UVRevProject
 
-PYPROJECT_FILE = "pyproject.toml"
-LOCK_FILE = "uv.lock"
-
 
 @dataclass(frozen=True)
 class RevisionChange:
@@ -53,16 +50,6 @@ class RevisionChange:
     def created(self) -> bool:
         """True if a new revision was created"""
         return self.revision != self.previous_revision
-
-
-def tracked_paths(project: UVRevProject) -> tuple[Path, ...]:
-    """Files whose state is tracked in the revisions"""
-    return (
-        project.pyproject_path,
-        project.lock_path,
-        project.python_version_path,
-        project.python_lock_path,
-    )
 
 
 def committed_files(
@@ -122,7 +109,7 @@ def committed_state(project: UVRevProject) -> Mapping[str, str]:
 
     Files missing in the revision are empty.
     """
-    paths = tracked_paths(project)
+    paths = project.tracked_paths
     committed = committed_files(project, "HEAD", paths)
     return {
         path.name: git(
@@ -138,7 +125,7 @@ def current_state(project: UVRevProject) -> Mapping[str, str]:
     """Current content of the tracked files, by file name (empty if missing)"""
     return {
         path.name: path.read_text() if path.exists() else ""
-        for path in tracked_paths(project)
+        for path in project.tracked_paths
     }
 
 
@@ -152,7 +139,10 @@ def is_same_state(old: Mapping[str, str], new: Mapping[str, str]) -> bool:
         return True
     others = (constants.PYTHON_VERSION_FILE, constants.PYTHON_VERSION_LOCK_FILE)
     return all(old[name] == new[name] for name in others) and same_except_any_version(
-        old[PYPROJECT_FILE], new[PYPROJECT_FILE], old[LOCK_FILE], new[LOCK_FILE]
+        old[constants.PYPROJECT_FILE],
+        new[constants.PYPROJECT_FILE],
+        old[constants.LOCK_FILE],
+        new[constants.LOCK_FILE],
     )
 
 
@@ -167,20 +157,20 @@ def state_change(
         previous_revision,
         revision,
         packages=Diff(
-            parse_uv_lock_packages(old[LOCK_FILE]),
-            parse_uv_lock_packages(new[LOCK_FILE]),
+            parse_uv_lock_packages(old[constants.LOCK_FILE]),
+            parse_uv_lock_packages(new[constants.LOCK_FILE]),
         ),
         dependencies=Diff(
-            parse_pyproject_deps(old[PYPROJECT_FILE]),
-            parse_pyproject_deps(new[PYPROJECT_FILE]),
+            parse_pyproject_deps(old[constants.PYPROJECT_FILE]),
+            parse_pyproject_deps(new[constants.PYPROJECT_FILE]),
         ),
         python=Diff(
             parse_python_lock(old[constants.PYTHON_VERSION_LOCK_FILE]),
             parse_python_lock(new[constants.PYTHON_VERSION_LOCK_FILE]),
         ),
         environments=Diff(
-            parse_uv_environments(old[PYPROJECT_FILE]),
-            parse_uv_environments(new[PYPROJECT_FILE]),
+            parse_uv_environments(old[constants.PYPROJECT_FILE]),
+            parse_uv_environments(new[constants.PYPROJECT_FILE]),
         ),
         python_request=Diff(
             parse_python_request(old[constants.PYTHON_VERSION_FILE]),
@@ -230,7 +220,7 @@ def create_revision(
     git(
         "add",
         "--",
-        *(path.name for path in tracked_paths(project) if path.exists()),
+        *(path.name for path in project.tracked_paths if path.exists()),
         project=project,
     )
 
@@ -271,12 +261,7 @@ def reset_on_failure(project: UVRevProject) -> Iterator[None]:
         yield
     except click.ClickException:
         # a failed command, or a missing one (uv, chmod)
-        changed = (
-            project.pyproject_path,
-            project.python_version_path,
-            project.lock_path,
-        )
-        reset = committed_files(project, "HEAD", changed)
+        reset = committed_files(project, "HEAD", project.source_paths)
         git("checkout", "HEAD", "--", *reset, project=project)
         raise
 
@@ -302,8 +287,7 @@ def restore_files(
         git("rev-parse", tag_name, project=project, capture_output=True)
     except SubprocessFailure:
         raise RevisionNotFoundError(f"Revision {revision} does not exist") from None
-    paths = (project.pyproject_path, project.lock_path, project.python_version_path)
-    for name in committed_files(project, tag_name, paths):
+    for name in committed_files(project, tag_name, project.source_paths):
         content = git(
             "show", f"{tag_name}:{name}", project=project, capture_output=True
         )
