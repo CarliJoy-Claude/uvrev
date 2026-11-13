@@ -68,8 +68,15 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   scratch copy, translated by `dry_run_call()` (`--no-sync`, `uv lock`).
   The cli shows the `Outcome` with `report_outcome()`.
   `sync` does not change the files, so `sync_packages()` is its own function.
-- Import cycle to keep in mind: `types` imports `settings`, `commands` imports
-  `types`. So `settings` must not import `commands`.
+- Import cycles to keep in mind: `types` and `exceptions` import `settings`,
+  `commands` imports both. So `settings` must not import `commands`.
+  `report` imports `revisions`, `operations` imports both: so `revisions` must
+  not import `report`, and `report` must not import `operations`.
+- The modules from bottom to top: `constants`, `settings`, `terminal`,
+  `exceptions`, `types`, `commands`, then the domain (`parser`, `differ`,
+  `io`, `marker`, `protection`, `verify`, `repair`, `python`, `revisions`,
+  `environment`, `operations`, `tool`), then `report`, `reporting`,
+  `options` and `cli`.
 
 ## Testing
 
