@@ -12,18 +12,10 @@ from pathlib import Path
 
 from packaging.version import Version
 
+from . import constants
 from .commands import uv
 from .exceptions import SubprocessFailure
 from .types import UVRevProject
-
-# Prints the version of the running interpreter, PEP 440 compatible
-# (platform.python_version() can be e.g. "3.15.0a1+" which is no valid version)
-_PRINT_PYTHON_VERSION = """
-import sys
-v = sys.version_info
-pre = {"alpha": "a", "beta": "b", "candidate": "rc"}.get(v.releaselevel)
-print(f"{v.major}.{v.minor}.{v.micro}" + (f"{pre}{v.serial}" if pre else ""))
-"""
 
 
 def get_python_version(project: UVRevProject) -> Version | None:
@@ -46,7 +38,7 @@ def interpreter_version(python: Path) -> Version:
     """Ask a Python interpreter for its exact version"""
     try:
         output = subprocess.run(
-            (str(python), "-c", _PRINT_PYTHON_VERSION),
+            (str(python), "-c", constants.PRINT_PYTHON_VERSION),
             capture_output=True,
             text=True,
             check=True,

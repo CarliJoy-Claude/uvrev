@@ -5,7 +5,7 @@ import pytest
 from conftest import Invoker
 from typed_settings.exceptions import TsError
 
-from uvrev import settings
+from uvrev import constants, settings
 from uvrev.settings import Settings, load_settings
 
 
@@ -58,7 +58,7 @@ class TestLoadSettings:
 
     def test_location(self) -> None:
         """The settings file is in the platform specific config dir"""
-        path = settings.config_file()
+        path = constants.config_file()
 
         assert path.name == "config.toml"
         assert path.parent.name == "uvrev"
@@ -81,7 +81,7 @@ class TestPythonVersionsSupported:
     @pytest.mark.parametrize("value", ["3.12:3.14", "3.12,3.14", "3.12, 3.14"])
     def test_env(self, value: str, monkeypatch: pytest.MonkeyPatch) -> None:
         """typed-settings splits at ":", "," is split by uvrev"""
-        monkeypatch.setenv(settings.PYTHON_VERSIONS_SUPPORTED_ENV, value)
+        monkeypatch.setenv(constants.PYTHON_VERSIONS_SUPPORTED_ENV, value)
 
         assert load_settings().python_versions_supported == ("3.12", "3.14")
 

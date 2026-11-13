@@ -28,15 +28,11 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal, get_args
+from typing import Literal, get_args
+
+from . import constants
 
 type MarkerState = Literal["pre-chmod", "post-chmod", "forced", "undefined"]
-
-# Seconds between two looks at the clock of the filesystem. Old filesystems
-# (ext3 with 128 byte inodes) only store full seconds.
-CLOCK_INTERVAL: Final[float] = 0.1
-# Signals that would stop uvrev while it makes the venv writable
-INTERRUPTING_SIGNALS: Final[tuple[str, ...]] = ("SIGINT", "SIGTERM", "SIGHUP")
 
 
 @dataclass(frozen=True)
@@ -147,7 +143,7 @@ def wait_for_clock(
     rounds = 0
     while now(path) == stamp:
         rounds += 1
-        sleep(CLOCK_INTERVAL)
+        sleep(constants.CLOCK_INTERVAL)
     return rounds
 
 
@@ -160,7 +156,9 @@ def uninterrupted() -> Iterator[None]:
     the marker has a state.
     """
     signals = tuple(
-        getattr(signal, name) for name in INTERRUPTING_SIGNALS if hasattr(signal, name)
+        getattr(signal, name)
+        for name in constants.INTERRUPTING_SIGNALS
+        if hasattr(signal, name)
     )
     previous = {number: signal.signal(number, signal.SIG_IGN) for number in signals}
     try:

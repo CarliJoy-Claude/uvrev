@@ -10,67 +10,23 @@ import base64
 import csv
 import hashlib
 import os
-import re
 import subprocess
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from importlib.metadata import Distribution, distributions
 from pathlib import Path
-from types import MappingProxyType
-from typing import Final, Literal
+from typing import Literal
 
 from packaging.utils import NormalizedName, canonicalize_name
 
 from . import constants
-from .commands import STDERR_FD, show_cmd, uv
+from .commands import show_cmd, uv
 from .exceptions import SubprocessFailure
 from .marker import remove_marker
 from .protection import writable_venv
 from .types import UVRevProject
 
 type ProblemKind = Literal["missing", "modified", "not_synced", "untracked"]
-
-# Problems fixed by reinstalling the package
-REINSTALL: Final[frozenset[ProblemKind]] = frozenset({"missing", "modified"})
-
-# The files a venv consists of itself, they are not installed by a package and
-# can not be verified or restored (only by creating the venv again).
-# In the root of the venv:
-VENV_ROOT_FILES: Final[frozenset[str]] = frozenset(
-    {"pyvenv.cfg", ".gitignore", "CACHEDIR.TAG", constants.VENV_LOCK_FILE}
-)
-# next to the interpreter (bin or Scripts):
-VENV_SCRIPTS: Final[frozenset[str]] = frozenset(
-    {
-        "activate",
-        "activate.bat",
-        "activate.csh",
-        "activate.fish",
-        "activate.nu",
-        "activate.ps1",
-        "activate.xsh",
-        "activate_this.py",
-        "deactivate.bat",
-        "pydoc.bat",
-    }
-)
-VENV_INTERPRETER: Final[re.Pattern[str]] = re.compile(
-    r"(python|pypy)w?[0-9.]*t?(\.exe)?"
-)
-SCRIPT_DIRECTORIES: Final[frozenset[str]] = frozenset({"bin", "Scripts"})
-# in site-packages:
-VENV_SITE_FILES: Final[frozenset[str]] = frozenset(
-    {"_virtualenv.py", "_virtualenv.pth"}
-)
-
-DESCRIPTIONS: Final[Mapping[ProblemKind, str]] = MappingProxyType(
-    {
-        "missing": "missing",
-        "modified": "modified",
-        "not_synced": "not in sync with uv.lock",
-        "untracked": "not installed by any package",
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -89,7 +45,7 @@ class Problem:
         b.py: not installed by any package
         """
         package = f" ({self.package})" if self.package else ""
-        return f"{self.path}{package}: {DESCRIPTIONS[self.kind]}"
+        return f"{self.path}{package}: {constants.PROBLEM_DESCRIPTIONS[self.kind]}"
 
 
 def file_hash(path: Path, algorithm: str) -> str:
@@ -140,7 +96,7 @@ def read_record(dist: Distribution) -> tuple[RecordEntry, ...]:
 
 
 def is_venv_file(project: UVRevProject, path: Path) -> bool:
-    """True for the files a venv consists of itself (see ``VENV_ROOT_FILES``).
+    """True for the files a venv consists of itself (see ``constants.VENV_ROOT_FILES``).
 
     >>> project = UVRevProject(Path("/env"))
     >>> is_venv_file(project, Path("/env/.venv/pyvenv.cfg"))
@@ -156,11 +112,15 @@ def is_venv_file(project: UVRevProject, path: Path) -> bool:
     """
     parts = path.relative_to(project.venv_path.resolve()).parts
     if len(parts) == 1:
-        return parts[0] in VENV_ROOT_FILES
-    if len(parts) == 2 and parts[0] in SCRIPT_DIRECTORIES:  # noqa: PLR2004
+        return parts[0] in constants.VENV_ROOT_FILES
+    if len(parts) == 2 and parts[0] in constants.SCRIPT_DIRECTORIES:  # noqa: PLR2004
         name = parts[1]
-        return name in VENV_SCRIPTS or bool(VENV_INTERPRETER.fullmatch(name))
-    return path.name in VENV_SITE_FILES and path.parent in project.site_packages
+        return name in constants.VENV_SCRIPTS or bool(
+            constants.VENV_INTERPRETER.fullmatch(name)
+        )
+    return (
+        path.name in constants.VENV_SITE_FILES and path.parent in project.site_packages
+    )
 
 
 def bytecode_source(path: Path) -> Path | None:
@@ -294,7 +254,7 @@ def sync_bytecode(project: UVRevProject) -> tuple[Path, ...]:
         show_cmd(cmd)
         # files that can not be compiled (e.g. templates, code for another
         # Python version) are reported by compileall, but are no failure
-        subprocess.run(cmd, stdout=STDERR_FD, check=False)
+        subprocess.run(cmd, stdout=constants.STDERR_FD, check=False)
     return tuple(removed)
 
 
@@ -322,7 +282,7 @@ def fix_problems(
             {
                 problem.package
                 for problem in problems
-                if problem.kind in REINSTALL and problem.package
+                if problem.kind in constants.REINSTALL_PROBLEMS and problem.package
             }
         )
     )

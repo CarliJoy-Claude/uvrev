@@ -9,7 +9,7 @@ import os
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
@@ -18,18 +18,6 @@ from packaging.version import Version
 
 from . import constants
 from .types import NormalizedRequirement
-
-# "any version": how a requirement without version is given to uv, as uv keeps
-# an existing constraint for a bare name. It is the same as no constraint.
-ANY_VERSION: Final[str] = ">=0"
-# a file name like pkg-1.0-py3-none-any.whl parses as requirement, but is a path
-ARCHIVE_SUFFIXES: Final[tuple[str, ...]] = (
-    ".whl",
-    ".zip",
-    ".tar.gz",
-    ".tgz",
-    ".tar.bz2",
-)
 
 
 def any_version(requirement: str) -> str:
@@ -53,7 +41,7 @@ def any_version(requirement: str) -> str:
     >>> any_version("git+https://example.com/six.git")
     'git+https://example.com/six.git'
     """
-    if requirement.lower().endswith(ARCHIVE_SUFFIXES):
+    if requirement.lower().endswith(constants.ARCHIVE_SUFFIXES):
         return requirement
     try:
         parsed = Requirement(requirement)
@@ -63,7 +51,9 @@ def any_version(requirement: str) -> str:
         return requirement
     # the text is changed instead of str(parsed), to keep it as the user wrote it
     name, separator, marker = requirement.partition(";")
-    return f"{name.strip()}{ANY_VERSION}" + (f"; {marker.strip()}" if separator else "")
+    return f"{name.strip()}{constants.ANY_VERSION}" + (
+        f"; {marker.strip()}" if separator else ""
+    )
 
 
 def _canonical_pyproject(toml_content: str) -> Mapping[str, Any]:
@@ -74,7 +64,7 @@ def _canonical_pyproject(toml_content: str) -> Mapping[str, Any]:
         canonical = []
         for dependency in dependencies:
             requirement = Requirement(dependency)
-            if str(requirement.specifier) == ANY_VERSION:
+            if str(requirement.specifier) == constants.ANY_VERSION:
                 requirement.specifier = SpecifierSet()
             canonical.append(str(requirement))
         data["project"]["dependencies"] = canonical
@@ -86,7 +76,7 @@ def _canonical_lock(toml_content: str) -> Mapping[str, Any]:
     data = tomllib.loads(toml_content)
     for package in data.get("package", ()):
         for requirement in package.get("metadata", {}).get("requires-dist", ()):
-            if requirement.get("specifier") == ANY_VERSION:
+            if requirement.get("specifier") == constants.ANY_VERSION:
                 del requirement["specifier"]
     return data
 
@@ -126,7 +116,7 @@ def parse_pyproject_deps(
 
     Returns:
         Dictionary mapping canonical package names to their version specifiers.
-        None for no constraint, which includes ``>=0`` (see ``ANY_VERSION``).
+        None for no constraint, which includes ``>=0`` (see ``constants.ANY_VERSION``).
 
     Examples:
         >>> content = '''
@@ -160,7 +150,9 @@ def parse_pyproject_deps(
         for dep_str in data.get("project", {}).get("dependencies", ())
     )
     return {
-        req.name: None if str(req.specifier) in {"", ANY_VERSION} else req.specifier
+        req.name: None
+        if str(req.specifier) in {"", constants.ANY_VERSION}
+        else req.specifier
         for req in requirements
     }
 

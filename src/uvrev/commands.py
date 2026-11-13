@@ -17,11 +17,9 @@ from typing import Protocol
 
 import click
 
+from . import constants
 from .exceptions import CommandNotFoundError, SubprocessFailure
 from .types import UVRevProject
-
-# stdout of internal commands is redirected here, so uvrev's stdout stays parseable
-STDERR_FD = 2
 
 
 def show_cmd(cmd: tuple[str, ...]) -> None:
@@ -63,7 +61,7 @@ def run_in(
     cwd: Path,
     cmd: tuple[str, ...],
     env: Mapping[str, str] | None = None,
-    stdout: int | None = STDERR_FD,
+    stdout: int | None = constants.STDERR_FD,
 ) -> str:
     """Show a command and run it in a directory.
 
@@ -116,7 +114,7 @@ def git(*args: str, project: UVRevProject, capture_output: bool = False) -> str:
     Returns:
         Command stdout if capture_output=True, otherwise an empty string
     """
-    stdout = subprocess.PIPE if capture_output else STDERR_FD
+    stdout = subprocess.PIPE if capture_output else constants.STDERR_FD
     return run_in(project.project_path, ("git", *args), stdout=stdout)
 
 
@@ -156,7 +154,7 @@ def uv(
     Returns:
         Command stdout if capture_output=True, otherwise an empty string
     """
-    stdout: int | None = STDERR_FD
+    stdout: int | None = constants.STDERR_FD
     if capture_output:
         stdout = subprocess.PIPE
     elif keep_stdout:
@@ -204,7 +202,7 @@ def uv_tool(
     """
     cmd = ("uv", *args)
     show_cmd(cmd)
-    stdout: int = STDERR_FD
+    stdout: int = constants.STDERR_FD
     if capture_stdout:
         stdout = subprocess.PIPE
     stderr: int | None = None

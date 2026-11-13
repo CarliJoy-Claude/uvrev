@@ -16,7 +16,7 @@ from platformdirs import user_data_path
 
 from . import constants
 from .parser import absolute_python_request
-from .reporting import DEFERRED_ERROR, get_settings
+from .reporting import get_settings
 from .terminal import warning
 from .types import UVRevProject
 
@@ -82,7 +82,7 @@ def env_option_callback(
         if ctx is None:
             raise
         # raised by ReportingCommand.invoke, the command is not executed
-        ctx.meta[DEFERRED_ERROR] = e
+        ctx.meta[constants.DEFERRED_ERROR] = e
         return UVRevProject(Path(value or constants.DEFAULT_ENV))
 
 

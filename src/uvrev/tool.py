@@ -25,7 +25,7 @@ from importlib import metadata
 from itertools import chain
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
-from typing import Any, Final
+from typing import Any
 from urllib.parse import unquote, urlsplit
 from urllib.request import url2pathname
 
@@ -41,32 +41,12 @@ from packaging.utils import (
 from packaging.version import Version
 from platformdirs import user_cache_path
 
+from . import constants
 from .commands import UvRunner, show_cmd, uv_tool
 from .exceptions import SubprocessFailure, ToolError
-from .parser import ARCHIVE_SUFFIXES
 from .protection import writable
 from .settings import Settings
 from .terminal import warning
-
-RECEIPT_NAME: Final[str] = "uvrev-receipt.json"
-EXTRA_METADATA: Final[str] = "extra_metadata"
-EMBEDDED_FILES: Final[tuple[str, ...]] = ("uv.lock", "pyproject.toml")
-# Variables of the caller that would change how the environment is built
-IGNORED_VARIABLES: Final[frozenset[str]] = frozenset(
-    {"UV_FROZEN", "UV_NO_SYNC", "UV_LOCKED", "UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV"}
-)
-# Dynamic fields that make uv build the metadata, which needs the source tree
-DYNAMIC_NEEDS_SOURCE: Final[tuple[str, ...]] = (
-    "dependencies",
-    "optional-dependencies",
-    "requires-python",
-)
-# connect, read, write and pool timeout of each operation, not of the whole download
-DOWNLOAD_TIMEOUT: Final[httpx2.Timeout] = httpx2.Timeout(30.0)
-SHA256_HEX_LENGTH: Final[int] = 64
-SUPPORTED_SPEC: Final[str] = (
-    "Give 'name', 'name==version' or the path or URL of a wheel"
-)
 
 
 @dataclass(frozen=True)
@@ -172,9 +152,9 @@ class Receipt:
     created: str
 
     def write(self, directory: Path) -> None:
-        tmp = directory / f"{RECEIPT_NAME}.tmp"
+        tmp = directory / f"{constants.RECEIPT_NAME}.tmp"
         tmp.write_text(json.dumps(asdict(self), indent=2) + "\n")
-        tmp.replace(directory / RECEIPT_NAME)
+        tmp.replace(directory / constants.RECEIPT_NAME)
 
 
 def is_url_or_path(spec: str) -> bool:
@@ -188,7 +168,7 @@ def is_url_or_path(spec: str) -> bool:
         or "/" in spec
         or "\\" in spec
         or spec.startswith((".", "~"))
-        or spec.lower().endswith(ARCHIVE_SUFFIXES)
+        or spec.lower().endswith(constants.ARCHIVE_SUFFIXES)
     )
 
 
@@ -210,7 +190,7 @@ def parse_hash_fragment(fragment: str) -> str | None:
     digest = digest.lower()
     if (
         algorithm != "sha256"
-        or len(digest) != SHA256_HEX_LENGTH
+        or len(digest) != constants.SHA256_HEX_LENGTH
         or any(c not in "0123456789abcdef" for c in digest)
     ):
         raise ToolError(
@@ -290,7 +270,7 @@ def parse_spec(spec: str) -> ToolSpec:
         # paths and URLs are no valid requirements, "name @ URL" is
         if "@" in spec or not is_url_or_path(spec):
             raise ToolError(
-                f"Invalid package specification '{spec}': {e}. {SUPPORTED_SPEC}"
+                f"Invalid package specification '{spec}': {e}. {constants.SUPPORTED_SPEC}"
             ) from None
         wheel = parse_wheel_location(spec)
         name = canonicalize_name(parse_wheel_filename(wheel.filename)[0])
@@ -325,7 +305,9 @@ def parse_spec(spec: str) -> ToolSpec:
         or specifiers[0].operator != "=="
         or specifiers[0].version.endswith("*")
     ):
-        raise ToolError(f"Unsupported package specification '{spec}'. {SUPPORTED_SPEC}")
+        raise ToolError(
+            f"Unsupported package specification '{spec}'. {constants.SUPPORTED_SPEC}"
+        )
     return ToolSpec(name, Version(specifiers[0].version), requirement.name)
 
 
@@ -350,7 +332,7 @@ def download(
         with (
             httpx2.Client(
                 follow_redirects=True,
-                timeout=DOWNLOAD_TIMEOUT,
+                timeout=constants.DOWNLOAD_TIMEOUT,
                 event_hooks=hooks,
                 transport=transport,
             ) as client,
@@ -478,7 +460,7 @@ def tool_directory(request: ToolRequest) -> Path:
 def uv_environment(venv: Path | None = None) -> Mapping[str, str]:
     """Environment for uv: the user's configuration without variables that change
     how the environment is built"""
-    env = {k: v for k, v in os.environ.items() if k not in IGNORED_VARIABLES}
+    env = {k: v for k, v in os.environ.items() if k not in constants.IGNORED_VARIABLES}
     if venv is not None:
         env["UV_PROJECT_ENVIRONMENT"] = str(venv)
     return MappingProxyType(env)
@@ -524,10 +506,10 @@ def find_dist_info(target: Path, name: NormalizedName) -> Path:
 
 def read_embedded(dist_info: Path) -> EmbeddedProject:
     """Read the uv.lock and pyproject.toml embedded by hatch-uv-lock"""
-    folder = dist_info / EXTRA_METADATA
-    missing = tuple(f for f in EMBEDDED_FILES if not (folder / f).is_file())
+    folder = dist_info / constants.EXTRA_METADATA
+    missing = tuple(f for f in constants.EMBEDDED_FILES if not (folder / f).is_file())
     if missing:
-        files = ", ".join(f"{EXTRA_METADATA}/{f}" for f in missing)
+        files = ", ".join(f"{constants.EXTRA_METADATA}/{f}" for f in missing)
         raise ToolError(
             f"The release ({dist_info.name}) does not contain {files}: "
             "it was not built with hatch-uv-lock, so its dependencies are not "
@@ -574,7 +556,9 @@ def check_embedded(
             'source = { editable = "." }, so it is not the lock of this project'
         )
 
-    dynamic = sorted(set(project.get("dynamic", ())) & set(DYNAMIC_NEEDS_SOURCE))
+    dynamic = sorted(
+        set(project.get("dynamic", ())) & set(constants.DYNAMIC_NEEDS_SOURCE)
+    )
     if dynamic:
         raise ToolError(
             f"The embedded pyproject.toml declares {', '.join(dynamic)} as dynamic. "
@@ -606,7 +590,7 @@ def get_uv_version(env: Mapping[str, str], uv: UvRunner = uv_tool) -> str:
 def has_receipt(directory: Path, request: ToolRequest) -> bool:
     """True if the environment in the directory is complete"""
     try:
-        data = json.loads((directory / RECEIPT_NAME).read_text())
+        data = json.loads((directory / constants.RECEIPT_NAME).read_text())
     except (OSError, ValueError):
         return False
     return (

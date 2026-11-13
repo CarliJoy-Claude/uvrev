@@ -3,24 +3,17 @@
 Loaded with typed-settings from the ``[uvrev]`` table of the config file, the
 files in ``UVREV_SETTINGS`` and ``UVREV_*`` environment variables.
 This module must not import ``commands`` (import cycle through ``types``).
+Its constants and the location of the config file are in ``constants.py``.
 """
 
 import json
-import re
 import subprocess
 from dataclasses import dataclass, field
 from functools import cache
-from pathlib import Path
-from typing import Final
 
 import typed_settings as ts
-from platformdirs import user_config_path
 
-APPNAME: Final[str] = "uvrev"
-CONFIG_FILE_NAME: Final[str] = "config.toml"
-# environment variable of the setting ``python_versions_supported``
-PYTHON_VERSIONS_SUPPORTED_ENV: Final[str] = "UVREV_PYTHON_VERSIONS_SUPPORTED"
-PYTHON_MINOR_VERSION: Final[re.Pattern[str]] = re.compile(r"\d+\.\d+")
+from . import constants
 
 
 @cache
@@ -71,9 +64,9 @@ def split_versions(versions: tuple[str, ...]) -> tuple[str, ...]:
         if version.strip()
     )
     for version in split:
-        if not PYTHON_MINOR_VERSION.fullmatch(version):
+        if not constants.PYTHON_MINOR_VERSION.fullmatch(version):
             raise ValueError(
-                f"python_versions_supported ({PYTHON_VERSIONS_SUPPORTED_ENV}) must be "
+                f"python_versions_supported ({constants.PYTHON_VERSIONS_SUPPORTED_ENV}) must be "
                 f"given as major.minor (e.g. 3.12), not {version!r}"
             )
     return split
@@ -114,11 +107,6 @@ class Settings:
         )
 
 
-def config_file() -> Path:
-    """Location of the settings file, e.g. ~/.config/uvrev/config.toml on Linux"""
-    return user_config_path(APPNAME) / CONFIG_FILE_NAME
-
-
 def load_settings() -> Settings:
     """Load the settings.
 
@@ -133,4 +121,4 @@ def load_settings() -> Settings:
     Raises:
         typed_settings.exceptions.TsError: If the settings are invalid.
     """
-    return ts.load(Settings, APPNAME, config_files=(config_file(),))
+    return ts.load(Settings, constants.APPNAME, config_files=(constants.config_file(),))

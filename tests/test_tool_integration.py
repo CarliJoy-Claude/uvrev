@@ -23,12 +23,13 @@ import pytest
 from click.testing import CliRunner, Result
 from conftest import writable_paths
 
+from uvrev import constants
 from uvrev.cli import cli
 from uvrev.commands import uv_tool
 from uvrev.protection import unprotect_venv
 from uvrev.reporting import Services
 from uvrev.settings import Settings, load_settings
-from uvrev.tool import RECEIPT_NAME, ToolServices
+from uvrev.tool import ToolServices
 
 pytestmark = pytest.mark.network
 
@@ -310,7 +311,7 @@ class TestHappyPath:
 
         (directory,) = tool_dirs(tool_env, "uvrev-fx-app")
         assert directory.name.startswith("1.0-")
-        receipt = json.loads((directory / RECEIPT_NAME).read_text())
+        receipt = json.loads((directory / constants.RECEIPT_NAME).read_text())
         assert receipt["package"] == "uvrev-fx-app"
         assert receipt["version"] == "1.0"
         assert receipt["extras"] == []
@@ -336,7 +337,7 @@ class TestHappyPath:
         result = run("--python", python, "uvrev-fx-app")
         assert result.exit_code == 0, result.output
         (directory,) = tool_dirs(tool_env, "uvrev-fx-app")
-        receipt = json.loads((directory / RECEIPT_NAME).read_text())
+        receipt = json.loads((directory / constants.RECEIPT_NAME).read_text())
         assert receipt["python"] == python
 
 
@@ -407,7 +408,7 @@ def test_cache_and_refresh(
     assert uv_calls.run("uvrev-fx-app==1.0").exit_code == 0
     assert syncs(uv_calls) == 1
     (directory,) = tool_dirs(tool_env, "uvrev-fx-app")
-    created = json.loads((directory / RECEIPT_NAME).read_text())["created"]
+    created = json.loads((directory / constants.RECEIPT_NAME).read_text())["created"]
     # the venv of the tool is protected like the venvs of the environments
     assert writable_paths(directory / ".venv") == ()
     # --refresh must also replace a venv someone made writable and changed
@@ -425,7 +426,10 @@ def test_cache_and_refresh(
     assert not marker.exists()
     assert writable_paths(directory / ".venv") == ()
     assert tool_dirs(tool_env, "uvrev-fx-app") == (directory,)
-    assert json.loads((directory / RECEIPT_NAME).read_text())["created"] >= created
+    assert (
+        json.loads((directory / constants.RECEIPT_NAME).read_text())["created"]
+        >= created
+    )
 
 
 class TestCallerEnvironment:
@@ -501,12 +505,12 @@ def test_killed_during_sync(tool_env: Path, tmp_path: Path, uv_calls: UvSpy) -> 
     assert killed.returncode == -9
     (directory,) = tool_dirs(tool_env, "uvrev-fx-app")
     assert (directory / "uv.lock").is_file()
-    assert not (directory / RECEIPT_NAME).exists()
+    assert not (directory / constants.RECEIPT_NAME).exists()
 
     result = uv_calls.run("uvrev-fx-app==1.0")
     assert result.exit_code == 0, result.output
     assert syncs(uv_calls) == 1
-    assert (directory / RECEIPT_NAME).is_file()
+    assert (directory / constants.RECEIPT_NAME).is_file()
 
 
 class TestWheelPathOrUrl:
@@ -536,7 +540,7 @@ class TestWheelPathOrUrl:
         # no version resolution with the index
         assert not any(call[:2] == ("pip", "compile") for call in uv_calls)
         (directory,) = tool_dirs(tool_env, "uvrev-fx-app")
-        receipt = json.loads((directory / RECEIPT_NAME).read_text())
+        receipt = json.loads((directory / constants.RECEIPT_NAME).read_text())
         assert receipt["source"] == str(wheel)
         assert receipt["wheel_sha256"] == hashlib.sha256(wheel.read_bytes()).hexdigest()
 
@@ -594,7 +598,10 @@ class TestWheelPathOrUrl:
             assert output["modules"]["idna"] is True
         assert syncs(uv_calls) == 1
         (directory,) = tool_dirs(tool_env, "uvrev-fx-app")
-        assert json.loads((directory / RECEIPT_NAME).read_text())["source"] == url
+        assert (
+            json.loads((directory / constants.RECEIPT_NAME).read_text())["source"]
+            == url
+        )
 
     def test_url_with_hash(
         self,

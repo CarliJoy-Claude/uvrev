@@ -13,7 +13,7 @@ import sys
 
 import click
 
-from . import constants, settings as uvrev_settings
+from . import constants
 from .commands import uv
 from .environment import configure_git, create_env, list_projects, mark_created
 from .exceptions import SubprocessFailure
@@ -64,8 +64,6 @@ from .terminal import fatal_error, success, warning
 from .tool import run_tool
 from .types import Revision, UVRevProject
 from .verify import VerifyResult
-
-INCOMPLETE_HINT = " (not created successfully, run 'uvrev env fix {name}' if it works)"
 
 
 @click.group(cls=UvrevGroup)
@@ -203,7 +201,8 @@ def env_list() -> None:
     for proj in projects:
         incomplete = not UVRevProject(get_base_dir() / proj).created_successfully()
         click.echo(
-            f"  • {proj}" + (INCOMPLETE_HINT.format(name=proj) if incomplete else "")
+            f"  • {proj}"
+            + (constants.INCOMPLETE_HINT.format(name=proj) if incomplete else "")
         )
 
 
@@ -660,7 +659,7 @@ def verify_cmd(
 @cli.command()
 def settings() -> None:
     """Show the settings and where they are loaded from"""
-    click.echo(f"# {uvrev_settings.config_file()} (and files in UVREV_SETTINGS)")
+    click.echo(f"# {constants.config_file()} (and files in UVREV_SETTINGS)")
     click.echo("[uvrev]")
     for name, value in vars(get_settings(click.get_current_context())).items():
         click.echo(f"{name} = {toml_value(value)}")

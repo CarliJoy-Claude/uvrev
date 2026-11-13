@@ -12,7 +12,7 @@ so running processes are not disturbed.
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal
+from typing import Literal
 
 import click
 from packaging.utils import NormalizedName
@@ -33,7 +33,6 @@ from .protection import unprotect
 from .terminal import warning
 from .types import UVRevProject
 from .verify import (
-    VENV_ROOT_FILES,
     Problem,
     find_problems,
     fix_problems,
@@ -41,10 +40,6 @@ from .verify import (
     is_venv_file,
     tracked_files,
 )
-
-# Files of the venv itself that uv creates or rewrites while using the venv
-# (e.g. its lock). A change of them is harmless.
-VOLATILE_VENV_FILES: Final[frozenset[str]] = frozenset(VENV_ROOT_FILES - {"pyvenv.cfg"})
 
 
 @dataclass(frozen=True)
@@ -129,7 +124,7 @@ def changed_since(project: UVRevProject, stamp: int) -> tuple[Problem, ...]:
                 if changed:
                     problems.append(Problem("modified", path, tracked[path]))
             elif is_venv_file(project, path):
-                if changed and name not in VOLATILE_VENV_FILES:
+                if changed and name not in constants.VOLATILE_VENV_FILES:
                     raise VenvChangedError(path)
             elif is_untracked(project, path, tracked):
                 problems.append(Problem("untracked", path))

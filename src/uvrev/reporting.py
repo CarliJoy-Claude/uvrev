@@ -17,11 +17,11 @@ from typing import Any, NoReturn, Protocol
 import click
 from typed_settings.exceptions import TsError
 
+from . import constants
 from .operations import (
     Outcome,
 )
 from .report import (
-    SCHEMA_VERSION,
     Header,
     Option,
     Report,
@@ -91,11 +91,6 @@ class JsonReport(Protocol):
 type ErrorReporter = Callable[[click.Context, str], JsonReport]
 
 
-# key in click.Context.meta: error found while parsing the options, raised when
-# the command is invoked, so it is reported like the failures of the command
-DEFERRED_ERROR = "uvrev.deferred_error"
-
-
 class ReportingCommand(click.Command):
     """Command that reports every failure.
 
@@ -132,7 +127,7 @@ class ReportingCommand(click.Command):
 
     def invoke_command(self, ctx: click.Context) -> Any:
         """Run the command, unless parsing its options found an error"""
-        if deferred := ctx.meta.pop(DEFERRED_ERROR, None):
+        if deferred := ctx.meta.pop(constants.DEFERRED_ERROR, None):
             raise deferred
         # invalid settings stop every command, also those not using them
         get_services(ctx)
@@ -197,7 +192,7 @@ def report_command(ctx: click.Context) -> str:
 def report_header(ctx: click.Context, error_message: str | None) -> Header:
     """The common fields of a report, as arguments for a CommandReport"""
     return Header(
-        schema_version=SCHEMA_VERSION,
+        schema_version=constants.SCHEMA_VERSION,
         status="error" if error_message else "success",
         command=report_command(ctx),
         arguments=report_arguments(ctx),

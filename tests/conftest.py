@@ -9,7 +9,7 @@ import pytest
 from click.testing import CliRunner, Result
 
 import uvrev.cli
-from uvrev import constants, environment, operations, revisions, settings
+from uvrev import constants, environment, operations, revisions
 from uvrev.types import UVRevProject
 
 
@@ -44,7 +44,7 @@ def isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             monkeypatch.delenv(name)
     # platformdirs uses XDG_CONFIG_HOME on Linux (CI), not on macOS or Windows
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    config_file = settings.config_file()
+    config_file = constants.config_file()
     assert config_file.is_relative_to(tmp_path), "settings are not isolated"
     return config_file
 

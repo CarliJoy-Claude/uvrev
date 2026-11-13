@@ -3,6 +3,8 @@
 All of them are ``click.ClickException``s, so ``ReportingCommand``
 (``reporting.py``) reports them and click ends the program with exit code 1
 and without a traceback. Everything else that is raised is a bug.
+
+This module must not import anything of uvrev (``terminal`` is imported late).
 """
 
 import shlex
@@ -12,14 +14,14 @@ from typing import IO, Any
 
 import click
 
-from . import settings as uvrev_settings
-from .terminal import error
-
 
 class UvrevError(click.ClickException):
     """A failure found by uvrev itself, shown like its other messages"""
 
     def show(self, file: IO[Any] | None = None) -> None:  # noqa: ARG002
+        # imported late: this module must not depend on other modules of uvrev
+        from .terminal import error  # noqa: PLC0415
+
         # like click, but in the style of uvrev: always to stderr
         error(self.format_message())
 
@@ -62,13 +64,13 @@ class CommandNotFoundError(click.ClickException):
 class ChmodNotFoundError(click.ClickException):
     """Protection is enabled, but there is no chmod to change the permissions"""
 
-    def __init__(self, command: str) -> None:
+    def __init__(self, command: str, config_file: Path) -> None:
         super().__init__(
             f"Protecting the .venv is enabled, but the '{command}' command was not "
             "found. "
             "It is needed to change the permissions of the .venv. "
             "Install it, or disable the protection with 'protect = false' in the "
-            f"[uvrev] table of {uvrev_settings.config_file()} "
+            f"[uvrev] table of {config_file} "
             "or the environment variable UVREV_PROTECT=false."
         )
 

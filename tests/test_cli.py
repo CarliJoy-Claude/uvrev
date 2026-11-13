@@ -17,7 +17,6 @@ from uvrev.commands import git
 from uvrev.io import read_pyproject
 from uvrev.parser import parse_uv_lock_packages
 from uvrev.revisions import show_history
-from uvrev.settings import PYTHON_VERSIONS_SUPPORTED_ENV
 from uvrev.types import UVRevProject
 
 
@@ -346,14 +345,14 @@ class TestEnvironments:
 
         # no supported version (3.0 is below requires-python):
         # tool.uv.environments is removed
-        monkeypatch.setenv(PYTHON_VERSIONS_SUPPORTED_ENV, "3.0")
+        monkeypatch.setenv(constants.PYTHON_VERSIONS_SUPPORTED_ENV, "3.0")
         report = parse_report(invoke("upgrade", "--json"))
         assert report["revision"] == 1
         assert report["environments"]["new"] == []
         assert self.environments(proj) == []
 
         # versions below requires-python are not used
-        monkeypatch.setenv(PYTHON_VERSIONS_SUPPORTED_ENV, f"3.0, {pinned}")
+        monkeypatch.setenv(constants.PYTHON_VERSIONS_SUPPORTED_ENV, f"3.0, {pinned}")
         result = invoke("add", "peppercorn", "--json")
 
         assert result.exit_code == 0, result.output
@@ -383,12 +382,12 @@ class TestEnvironments:
         upgradeable_project: UVRevProject,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setenv(PYTHON_VERSIONS_SUPPORTED_ENV, "3.12,abc")
+        monkeypatch.setenv(constants.PYTHON_VERSIONS_SUPPORTED_ENV, "3.12,abc")
 
         result = invoke("upgrade")
 
         assert result.exit_code == 1
-        assert PYTHON_VERSIONS_SUPPORTED_ENV in result.output
+        assert constants.PYTHON_VERSIONS_SUPPORTED_ENV in result.output
 
 
 class TestEnvList:

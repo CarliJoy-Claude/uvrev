@@ -8,7 +8,7 @@ when a report is printed is decided in ``cli.py``.
 import json
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
-from typing import Final, Literal, Self, TypedDict
+from typing import Literal, Self, TypedDict
 
 from packaging.utils import NormalizedName
 
@@ -18,8 +18,6 @@ from .repair import RepairResult
 from .revisions import RevisionChange
 from .types import Revision
 from .verify import Problem, VerifyResult
-
-SCHEMA_VERSION: Final[int] = 2
 
 # value of a command line option in the report
 type Option = bool | str | None
@@ -237,7 +235,7 @@ class Report(CommandReport):
             ('error', 2, False)
         """
         return cls(
-            schema_version=SCHEMA_VERSION,
+            schema_version=constants.SCHEMA_VERSION,
             status="error" if error_message else "success",
             command=command,
             arguments=arguments,

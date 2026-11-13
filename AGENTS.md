@@ -68,12 +68,20 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   scratch copy, translated by `dry_run_call()` (`--no-sync`, `uv lock`).
   The cli shows the `Outcome` with `report_outcome()`.
   `sync` does not change the files, so `sync_packages()` is its own function.
-- Import cycles to keep in mind: `types` and `exceptions` import `settings`,
-  `commands` imports both. So `settings` must not import `commands`.
+- All constants live in `constants.py`, also if only one module uses them.
+  A value that depends on the environment at the time of the call is a
+  function there (`config_file()`: the tests change `XDG_CONFIG_HOME`).
+- `constants.py` and `exceptions.py` import nothing of uvrev and must stay
+  that way (`tests/test_layers.py`). An exception gets what it needs as an
+  argument, or imports late within a method (`terminal` in `UvrevError.show`).
+  `types` only imports `constants` and `settings` (the default of
+  `UVRevProject.settings`): keep it that small.
+- Import cycles to keep in mind: `commands` imports `types`, which imports
+  `settings`. So `settings` must not import `commands`.
   `report` imports `revisions`, `operations` imports both: so `revisions` must
   not import `report`, and `report` must not import `operations`.
-- The modules from bottom to top: `constants`, `settings`, `terminal`,
-  `exceptions`, `types`, `commands`, then the domain (`parser`, `differ`,
+- The modules from bottom to top: `constants`, `exceptions`, `settings`,
+  `terminal`, `types`, `commands`, then the domain (`parser`, `differ`,
   `io`, `marker`, `protection`, `verify`, `repair`, `interpreter`, `revisions`,
   `environment`, `operations`, `tool`), then `report`, `reporting`,
   `options` and `cli`.

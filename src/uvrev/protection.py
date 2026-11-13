@@ -33,7 +33,7 @@ def chmod(venv: Path, mode: str, command: str) -> None:
     if not venv.is_dir():
         return
     if shutil.which(command) is None:
-        raise ChmodNotFoundError(command)
+        raise ChmodNotFoundError(command, constants.config_file())
     run_cmd(command, "-R", mode, venv.name, cwd=venv.parent)
 
 

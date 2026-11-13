@@ -15,12 +15,12 @@ from click.testing import CliRunner
 from packaging.utils import NormalizedName
 from packaging.version import Version
 
+from uvrev import constants
 from uvrev.cli import cli
 from uvrev.commands import UvRunner, uv_tool
 from uvrev.exceptions import SubprocessFailure, ToolError
 from uvrev.settings import Settings
 from uvrev.tool import (
-    RECEIPT_NAME,
     EmbeddedProject,
     ToolRequest,
     ToolServices,
@@ -435,12 +435,12 @@ class TestReceipt:
     )
     def test_incomplete(self, tmp_path: Path, content: str | None) -> None:
         if content is not None:
-            (tmp_path / RECEIPT_NAME).write_text(content)
+            (tmp_path / constants.RECEIPT_NAME).write_text(content)
         assert not has_receipt(tmp_path, REQUEST)
 
     def test_complete(self, tmp_path: Path) -> None:
         receipt = json.dumps({"package": "my-tool", "version": "1.0"})
-        (tmp_path / RECEIPT_NAME).write_text(receipt)
+        (tmp_path / constants.RECEIPT_NAME).write_text(receipt)
         assert has_receipt(tmp_path, REQUEST)
 
 
@@ -476,7 +476,7 @@ class TestEnvironment:
             directory = tool_directory(REQUEST)
             directory.mkdir(parents=True)
             receipt = {"package": NAME, "version": "1.0", "wheel_sha256": None}
-            (directory / RECEIPT_NAME).write_text(json.dumps(receipt))
+            (directory / constants.RECEIPT_NAME).write_text(json.dumps(receipt))
             yield
 
         def fail(*_: Any) -> None:
