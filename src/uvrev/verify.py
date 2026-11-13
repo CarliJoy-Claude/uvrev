@@ -21,6 +21,7 @@ from typing import Final, Literal
 
 from packaging.utils import NormalizedName, canonicalize_name
 
+from . import constants
 from .commands import STDERR_FD, show_cmd, uv
 from .exceptions import SubprocessFailure
 from .marker import remove_marker
@@ -36,7 +37,7 @@ REINSTALL: Final[frozenset[ProblemKind]] = frozenset({"missing", "modified"})
 # can not be verified or restored (only by creating the venv again).
 # In the root of the venv:
 VENV_ROOT_FILES: Final[frozenset[str]] = frozenset(
-    {"pyvenv.cfg", ".gitignore", "CACHEDIR.TAG", ".lock"}
+    {"pyvenv.cfg", ".gitignore", "CACHEDIR.TAG", constants.VENV_LOCK_FILE}
 )
 # next to the interpreter (bin or Scripts):
 VENV_SCRIPTS: Final[frozenset[str]] = frozenset(

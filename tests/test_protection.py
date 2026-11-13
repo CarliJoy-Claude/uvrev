@@ -1,11 +1,13 @@
 import os
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
 from conftest import Invoker, writable_paths
 
-from uvrev.commands import uv
+from uvrev import constants
+from uvrev.commands import uv, uv_environ
 from uvrev.exceptions import ChmodNotFoundError, SubprocessFailure
 from uvrev.protection import protect, unprotect, writable_venv
 from uvrev.settings import Settings
@@ -48,6 +50,28 @@ class TestProtect:
         assert mode(venv / "lib" / "module.py") == 0o440
         assert mode(venv / "bin" / "script") == 0o555
         assert writable_paths(venv) == ()
+
+    def test_lock_stays_writable_for_owner(self, project: UVRevProject) -> None:
+        """uv opens the lock of the venv for writing, also to only read the venv"""
+        lock = project.venv_path / constants.VENV_LOCK_FILE
+        lock.touch()
+        lock.chmod(0o664)
+
+        protect(project)
+
+        assert mode(lock) == 0o644
+        assert mode(project.venv_path) == 0o555
+
+    def test_linked_lock_untouched(self, project: UVRevProject, tmp_path: Path) -> None:
+        """A lock that is a link is not followed: its target stays as it is"""
+        outside = tmp_path / "outside"
+        outside.touch()
+        outside.chmod(0o444)
+        (project.venv_path / constants.VENV_LOCK_FILE).symlink_to(outside)
+
+        protect(project)
+
+        assert mode(outside) == 0o444
 
     def test_symlink_target_untouched(
         self, project: UVRevProject, tmp_path: Path
@@ -235,3 +259,19 @@ class TestCli:
         assert result.exit_code == 0
         assert "uv sync --locked\n" in result.output
         assert writable_paths(sample_project.venv_path) == ()
+
+
+def test_uv_locks_protected_venv(synced_project: UVRevProject) -> None:
+    """uv can take its lock to read a protected venv (it only warns if it can not)"""
+    assert writable_paths(synced_project.venv_path) == ()
+
+    result = subprocess.run(
+        ("uv", "--verbose", "sync", "--frozen", "--check"),
+        cwd=synced_project.project_path,
+        env=uv_environ(synced_project, os.environ),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert "Failed to acquire environment lock" not in result.stderr

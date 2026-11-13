@@ -37,6 +37,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `uvrev tool run`: a package specification ending in `.tar.bz2` is a path, like the other archives,
   instead of the name of a package.
 
+### Fixed
+
+- uv could not lock a protected `.venv`, as it opens `.venv/.lock` for writing. It went on without the lock
+  (e.g. the check of `uvrev run`), so it could read a `.venv` that another uv was changing.
+  The lock file now stays writable for the owner, everything else is read-only as before.
+
 ## [0.6] (2026-11-11)
 
 ### Added

@@ -130,6 +130,13 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   are settings). GNU `chmod -R` does not follow symlinks found while traversing,
   so the python interpreter `.venv/bin/python` links to is safe. Through the
   hardlinks, the files in the uv cache get the same permissions.
+- A protected `.venv` must stay usable. uv locks a venv with `.venv/.lock`
+  before it uses it, also to only read it (`uv sync --check`), and opens the
+  file for writing. If it can not, uv goes on without the lock and only warns
+  with `--verbose`. So `protect_venv()` keeps this one file writable for the
+  owner. `uv run --no-sync`, `uv tree`, `uv pip list` and `uv export` need no
+  write access. To check such things, run as a normal user under `strace`
+  and look for `EACCES`.
 - Every uv call that changes a `.venv` runs inside `writable_venv()` (tool
   venvs: `writable()`), which always protects again in `finally`. Nest it
   inside `reset_on_failure`. A protected `.venv` must be made writable before

@@ -92,6 +92,8 @@ So nobody can change the installed packages by accident, e.g. with `pip install`
 uvrev makes the `.venv` writable (`chmod -R u+w .venv`) only while `uv` changes it and protects it
 again afterwards, even if `uv` fails. `uvrev run` syncs the environment first if needed and then
 runs the command with the protected `.venv`. The environments of `uvrev tool run` are protected as well.
+Only the lock file of uv (`.venv/.lock`, an empty file) stays writable for its owner: uv needs it to
+lock the `.venv`, also when it only reads it.
 
 uv hardlinks the installed files from its cache, so `chmod` also changes the permissions of
 these files in the uv cache, and with that in other environments using the same files.
