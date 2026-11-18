@@ -540,7 +540,8 @@ def protect(ctx: click.Context, project: UVRevProject, as_json: bool) -> None:
 
     An environment that was unprotected with 'uvrev unprotect' is repaired
     first: afterwards its venv only contains the files of the locked packages.
-    Packages with changed files are reinstalled, other files are removed.
+    Packages with changed files are reinstalled, other files are removed,
+    changed files of the venv itself are created again.
     """
     repaired = repair(project)
     protect_venv(project)
@@ -550,6 +551,7 @@ def protect(ctx: click.Context, project: UVRevProject, as_json: bool) -> None:
             f"Repaired: {len(repaired.packages)} package(s) reinstalled"
             f"{' (' + ', '.join(repaired.packages) + ')' if repaired.packages else ''}"
             f", {len(repaired.removed_files)} file(s) removed"
+            f"{', files of the venv itself created again' if repaired.regenerated else ''}"
         )
     if not project.settings.protect:
         warning(
@@ -573,8 +575,9 @@ def unprotect(ctx: click.Context, project: UVRevProject, as_json: bool) -> None:
     It is fast and can not be interrupted with Ctrl+C. The environment is
     marked as unprotected (.unprotected). The next 'uvrev protect', or the
     next command that changes the environment, repairs it first: packages
-    whose files were changed since now are reinstalled, and files that no
-    package installed are removed. 'uvrev run' leaves it as it is.
+    whose files were changed since now are reinstalled, files that no
+    package installed are removed and changed files of the venv itself are
+    created again. 'uvrev run' leaves it as it is.
     """
     changed, marker = mark_unprotected(project)
     if changed:
@@ -586,7 +589,7 @@ def unprotect(ctx: click.Context, project: UVRevProject, as_json: bool) -> None:
             "It is not known since when the venv is writable (an earlier "
             "'uvrev unprotect' did not finish, or .unprotected was changed). "
             "The next 'uvrev protect' has to compare every file with its package, "
-            "which is slower. Run 'uvrev sync --clean' afterwards to be sure."
+            "which is slower."
         )
     others = [
         name

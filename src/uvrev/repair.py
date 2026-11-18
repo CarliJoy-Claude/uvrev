@@ -5,7 +5,8 @@ So it only makes the venv writable and remembers when (see ``marker.py``).
 
 The next command that protects the environment brings the venv back into a
 valid state first: it only contains the files of the packages locked in
-uv.lock, with the content of their wheels. The venv and the uv cache are kept,
+uv.lock, with the content of their wheels, and the files of the venv itself
+as uv creates them. The venv and the uv cache are kept,
 so running processes are not disturbed.
 """
 
@@ -18,7 +19,6 @@ import click
 from packaging.utils import NormalizedName
 
 from . import constants
-from .exceptions import VenvChangedError
 from .io import exclude_from_git
 from .marker import (
     Marker,
@@ -30,7 +30,6 @@ from .marker import (
     write_marker,
 )
 from .protection import unprotect
-from .terminal import warning
 from .types import UVRevProject
 from .verify import (
     Problem,
@@ -53,6 +52,8 @@ class RepairResult:
     packages: tuple[NormalizedName, ...]
     # removed files that no package installed
     removed_files: tuple[Path, ...]
+    # True if the files of the venv itself were created again
+    regenerated: bool = False
 
 
 def mark_unprotected(project: UVRevProject) -> tuple[bool, Marker]:
@@ -104,17 +105,23 @@ def changed_since(project: UVRevProject, stamp: int) -> tuple[Problem, ...]:
       untracked ones, and all files of the packages are checked for existence.
     - A file that no package installed: it is removed (``untracked``).
     - Bytecode of an existing source is fine, it is compiled again later.
-
-    Raises:
-        VenvChangedError: If a file of the venv itself was changed.
+    - A changed file of the venv itself, or a missing ``pyvenv.cfg``: they are
+      created again (``venv_file``). Which other files a venv has depends on
+      the version of uv, so a changed folder of the interpreter counts as well.
+      Changes of the files that uv writes itself (``pyvenv.cfg``, ``.lock``)
+      are harmless.
     """
     venv = project.venv_path.resolve()
     tracked = tracked_files(project)
+    scripts = {venv / name for name in constants.SCRIPT_DIRECTORIES}
     problems = []
     entries_changed = False
     for directory, _, filenames in os.walk(venv):
-        folder_changed = Path(directory).lstat().st_ctime_ns > stamp
+        folder = Path(directory)
+        folder_changed = folder.lstat().st_ctime_ns > stamp
         entries_changed = entries_changed or folder_changed
+        if folder_changed and folder in scripts:
+            problems.append(Problem("venv_file", folder))
         for name in filenames:
             path = Path(directory, name)
             changed = path.lstat().st_ctime_ns > stamp
@@ -125,15 +132,16 @@ def changed_since(project: UVRevProject, stamp: int) -> tuple[Problem, ...]:
                     problems.append(Problem("modified", path, tracked[path]))
             elif is_venv_file(project, path):
                 if changed and name not in constants.VOLATILE_VENV_FILES:
-                    raise VenvChangedError(path)
+                    problems.append(Problem("venv_file", path))
             elif is_untracked(project, path, tracked):
                 problems.append(Problem("untracked", path))
 
     if entries_changed:
-        if project.interpreter is None:
-            raise VenvChangedError(venv / "bin" / "python")
-        if not (venv / "pyvenv.cfg").is_file():
-            raise VenvChangedError(venv / "pyvenv.cfg")
+        # the only file of the venv itself outside of the folder of the
+        # interpreter that every version of uv creates (_virtualenv.py not)
+        config = venv / constants.VENV_CONFIG_FILE
+        if not os.path.lexists(config):
+            problems.append(Problem("venv_file", config))
         problems.extend(
             Problem("missing", path, package)
             for path, package in tracked.items()
@@ -147,19 +155,18 @@ def repair(project: UVRevProject) -> RepairResult | None:
 
     - ``post-chmod``: only what changed since unprotecting is repaired (fast).
     - Any other state: there is no time that can be trusted, so every file
-      is compared with the hash of its package like ``uvrev verify --fix``.
-      This can not see changes of the files of the venv itself, or of a
-      RECORD that match a changed file, so the user is told about
-      ``uvrev sync --clean``.
+      is compared with the hash of its package like ``uvrev verify --fix``,
+      and the files of the venv itself are always created again.
+
+    A package that was replaced by another build of the same version (with a
+    matching RECORD) is found by ``uv sync``, which reinstalls it from the
+    source in ``uv.lock``.
 
     Afterwards the venv is protected (if enabled) and the mark is removed.
     If it fails, the environment stays marked.
 
     Returns:
         What was done, None if the environment is not marked as unprotected.
-
-    Raises:
-        VenvChangedError: If a file of the venv itself was changed (fast repair).
     """
     path = project.unprotected_marker_path
     marker = read_marker(path)
@@ -171,14 +178,8 @@ def repair(project: UVRevProject) -> RepairResult | None:
             "fast", *fix_problems(project, changed_since(project, marker.stamp))
         )
     else:
-        result = RepairResult("full", *fix_problems(project, find_problems(project)))
-    remove_marker(path)
-    if result.mode == "full":
-        warning(
-            "The environment was unprotected without a reliable time, so every "
-            "file was compared with the hash recorded by its package. This can "
-            "not detect changes of the virtual environment itself (pyvenv.cfg, "
-            "the scripts to activate it) or of the recorded hashes. "
-            "Run 'uvrev sync --clean' to be sure."
+        result = RepairResult(
+            "full", *fix_problems(project, find_problems(project), regenerate=True)
         )
+    remove_marker(path)
     return result

@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `.venv/pyvenv.cfg` stays writable for its owner in a protected `.venv`, like the lock file of uv:
   uv rewrites it, e.g. if the interpreter changed. A changed `pyvenv.cfg` no longer lets the repair
   after `uvrev unprotect` fail.
+- The repair after `uvrev unprotect` no longer fails if a file of the virtual environment itself
+  (the `python` links, the `activate` scripts, `_virtualenv.py`/`.pth`, a missing `pyvenv.cfg`) was changed:
+  they are created again in place with `uv venv --allow-existing`, the `.venv` and the uv cache are kept.
+  Without a reliable time (full repair) this is always done, and there is no more warning to run
+  `uvrev sync --clean`. `uvrev verify --fix` creates them again as well.
+- JSON reports: `repair` contains `regenerated` (`schema_version` stays 2).
 
 ### Fixed
 

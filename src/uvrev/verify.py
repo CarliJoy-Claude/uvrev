@@ -4,6 +4,9 @@ A valid venv only contains the files in the ``RECORD`` of its packages (with
 the recorded hash), the files of the venv itself and bytecode of an existing
 source, and it is in sync with ``uv.lock``. Every file is hashed, so this does
 not depend on timestamps (the fast check by ctime is in ``repair.py``).
+
+The files of the venv itself are no part of any package, so they can not be
+verified. Fixing creates them again in place (``regenerate_venv``).
 """
 
 import base64
@@ -22,11 +25,14 @@ from packaging.utils import NormalizedName, canonicalize_name
 from . import constants
 from .commands import show_cmd, uv
 from .exceptions import SubprocessFailure
-from .marker import remove_marker
+from .io import read_pyproject
+from .marker import remove_marker, touch, wait_for_clock
 from .protection import writable_venv
 from .types import UVRevProject
 
-type ProblemKind = Literal["missing", "modified", "not_synced", "untracked"]
+type ProblemKind = Literal[
+    "missing", "modified", "not_synced", "untracked", "venv_file"
+]
 
 
 @dataclass(frozen=True)
@@ -259,11 +265,78 @@ def sync_bytecode(project: UVRevProject) -> tuple[Path, ...]:
     return tuple(removed)
 
 
+def venv_prompt(config: str) -> str | None:
+    """The prompt in the content of a ``pyvenv.cfg``, None if there is none
+
+    >>> venv_prompt("home = /usr/bin\\nprompt = uvrev-venv-base\\n")
+    'uvrev-venv-base'
+    >>> venv_prompt("home = /usr/bin\\n") is None
+    True
+    """
+    for line in config.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() == "prompt":
+            return value.strip()
+    return None
+
+
+def regenerate_venv(project: UVRevProject) -> tuple[Path, ...]:
+    """Create the files of the venv itself again, in place.
+
+    ``uv venv --allow-existing`` writes all of them again (``pyvenv.cfg``, the
+    links to the interpreter, the activate scripts, ``_virtualenv.py`` and
+    ``.pth``) and keeps the installed packages. Nothing is removed before, so
+    the venv stays usable. Files of the venv itself that uv did not write
+    again (e.g. an added link ``bin/python3.99``) are removed afterwards: they
+    are older than the time taken before uv ran (see ``wait_for_clock``).
+
+    - No interpreter is passed: uv chooses it by ``.python-version``, like
+      ``uv sync`` (e.g. a managed Python is linked by its minor version, so
+      uv can upgrade its patch version transparently).
+    - The prompt is kept. Without ``pyvenv.cfg`` it is the name of the
+      project, as ``uv sync`` writes it.
+
+    The venv must be writable.
+
+    Returns:
+        The removed files.
+    """
+    venv = project.venv_path.resolve()
+    lock = venv / constants.VENV_LOCK_FILE
+    stamp = touch(lock)
+    wait_for_clock(lock, stamp)
+    config = venv / constants.VENV_CONFIG_FILE
+    prompt = (venv_prompt(config.read_text()) if config.is_file() else None) or str(
+        read_pyproject(project)["project"]["name"]
+    )
+    uv(
+        "venv",
+        "--allow-existing",
+        "--prompt",
+        prompt,
+        venv.name,
+        project=project,
+    )
+    removed = []
+    for path in venv_files(project):
+        if (
+            path.parent != venv
+            and is_venv_file(project, path)
+            and path.lstat().st_ctime_ns <= stamp
+        ):
+            path.unlink()
+            removed.append(path)
+    return tuple(removed)
+
+
 def fix_problems(
-    project: UVRevProject, problems: tuple[Problem, ...]
-) -> tuple[tuple[NormalizedName, ...], tuple[Path, ...]]:
+    project: UVRevProject, problems: tuple[Problem, ...], regenerate: bool = False
+) -> tuple[tuple[NormalizedName, ...], tuple[Path, ...], bool]:
     """Bring the venv into a valid state, the venv itself is kept.
 
+    - The files of the venv itself are created again (``regenerate_venv``), if
+      asked for or if one of them changed (``venv_file``). This is done first,
+      so uv can use the venv afterwards.
     - Untracked files are removed.
     - Packages with missing or modified files are reinstalled in place.
       uv hardlinks the files of a package from its cache, so a file changed in
@@ -276,8 +349,10 @@ def fix_problems(
     - The venv is protected (if enabled).
 
     Returns:
-        The reinstalled packages and the removed files.
+        The reinstalled packages, the removed files and whether the files of
+        the venv itself were created again.
     """
+    regenerate = regenerate or any(p.kind == "venv_file" for p in problems)
     reinstall = tuple(
         sorted(
             {
@@ -287,8 +362,10 @@ def fix_problems(
             }
         )
     )
-    removed = []
+    removed: list[Path] = []
     with writable_venv(project):
+        if regenerate:
+            removed.extend(regenerate_venv(project))
         for problem in problems:
             if problem.kind == "untracked":
                 problem.path.unlink(missing_ok=True)
@@ -304,7 +381,7 @@ def fix_problems(
             project=project,
         )
         removed.extend(sync_bytecode(project))
-    return reinstall, tuple(removed)
+    return reinstall, tuple(removed), regenerate
 
 
 def verify(
@@ -330,7 +407,8 @@ def verify(
     if not fix:
         return VerifyResult(problems, problems)
 
-    fix_problems(project, problems)
+    # changes of the files of the venv itself can not be found
+    fix_problems(project, problems, regenerate=True)
     remaining = find(project)
     if not remaining:
         remove_marker(project.unprotected_marker_path)

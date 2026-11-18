@@ -119,12 +119,19 @@ which contains the time when the `.venv` became writable.
 The mark is the reason for a **repair**. It is done by `uvrev protect`, and by every command that changes
 the environment (`add`, `remove`, `sync`, `upgrade`, `upgrade-python`, `restore`) before it does its work.
 Afterwards the `.venv` is valid again: it only contains the files of the packages locked in `uv.lock`,
-with the content of their wheels.
+with the content of their wheels, and the files of the virtual environment itself as uv creates them.
 
 - Packages with files changed since `unprotect` are removed from the uv cache and reinstalled.
   A file counts as changed if its ctime is later than the time in `.unprotected`.
   The ctime can not be set back by a user, unlike the modification time.
 - Files that no package installed are removed, in the whole `.venv`.
+- If a file of the virtual environment itself (the `python` links, the `activate` scripts,
+  `_virtualenv.py`/`.pth`) was changed or is missing, they are created again in place with
+  `uv venv --allow-existing`. Like `uv sync`, uv chooses the interpreter by `.python-version`.
+  Files of this kind that uv does not create (e.g. an added `bin/python3.99`) are removed.
+  `pyvenv.cfg` is written by uv and stays writable: changes of it are fine, a missing one is created again.
+- uv also reinstalls a package that was replaced by another build of the same version, as it is
+  installed from another source than the one in `uv.lock`.
 - The bytecode (`__pycache__`) is brought in sync with the sources: without source it is removed,
   the rest is compiled again (setting `compile_bytecode`).
 - The `.venv` is protected and `.unprotected` is removed.
@@ -133,16 +140,16 @@ The `.venv` and the uv cache are kept, so running processes are not disturbed mo
 `uvrev run` does **not** repair and does not sync an unprotected environment: it runs with the hotfix.
 `uvrev unprotect` for an environment that is unprotected already does nothing, the time is kept.
 
+If `uvrev unprotect` did not finish (e.g. it was killed) or `.unprotected` was changed, there is no time
+that can be trusted. `uvrev unprotect` still makes the `.venv` writable and warns. The repair then
+compares every file with the hash recorded by its package, like `uvrev verify --fix`, which is slower,
+and always creates the files of the virtual environment itself again.
+
+If the repair fails (e.g. there is no interpreter for `.python-version` and it can not be
+downloaded), the environment stays marked.
+
 What the repair can not do:
 
-- The files of the virtual environment itself (the `python` links and the `activate` scripts)
-  are not part of any package. If one of them was changed, the repair fails and the environment stays marked.
-  Changes of `pyvenv.cfg` are accepted, it is written by uv and stays writable.
-  Run `uvrev sync --clean`.
-- If `uvrev unprotect` did not finish (e.g. it was killed) or `.unprotected` was changed, there is no time
-  that can be trusted. `uvrev unprotect` still makes the `.venv` writable and warns. The repair then
-  compares every file with the hash recorded by its package, like `uvrev verify --fix`, which is slower.
-  It warns that `uvrev sync --clean` might be needed, as this can not see everything (see below).
 - Other environments: uvrev is made for one environment. With several, a changed file of a shared package
   is changed in the others as well, where nobody knows about it. `uvrev unprotect` warns about this.
   Run `uvrev verify --fix` for the others.
@@ -156,7 +163,7 @@ uvrev sync --clean
 ```
 
 deletes the **complete** uv cache and the `.venv` and installs everything again from `uv.lock`.
-It is the way out of every state that can not be repaired. It needs the network,
+It is the way out of every state that can not be repaired, e.g. if the interpreter is gone. It needs the network,
 and running processes of the environment lose their files.
 The JSON report has `"clean": true` in `options`. It lists no changed packages if the versions are the
 same as before, although everything was installed again.
@@ -172,12 +179,13 @@ same as before, although everything was installed again.
 
 `uvrev verify` exits with `1` if problems were found.
 `uvrev verify --fix` removes the affected packages from the uv cache (`uv cache clean --force`),
-reinstalls them, removes the files that no package installed, brings the bytecode in sync
+reinstalls them, removes the files that no package installed, creates the files of the virtual
+environment itself again (they can not be checked), brings the bytecode in sync
 and protects the `.venv` again (if enabled). A mark of `uvrev unprotect` is removed.
 
 It reads every file, so it is slower than the repair after `uvrev unprotect`, but it does not depend on
-timestamps. It trusts the `RECORD` files in the `.venv` and can not check the files of the virtual
-environment itself. To be sure about those, use `uvrev sync --clean`.
+timestamps. It trusts the `RECORD` files in the `.venv`: a file changed together with its hash
+in `RECORD` is not found.
 
 uv hardlinks the installed files from its cache, so a file changed in a `.venv` is changed in the
 cache as well, and in all other environments using it ([uv#22979](https://github.com/astral-sh/uv/issues/22979)).
@@ -285,7 +293,7 @@ uvrev add pandas numpy --json
 | `python` | `object \| null` | `old` and `new` exact version of the Python interpreter, if it changed. `null` if it did not change. |
 | `python_request` | `object \| null` | `old` and `new` pinned Python request (the content of `.python-version`, e.g. `3.14`, `>=3.13, <3.15` or `/usr/bin/python3.14`), if it changed. `null` if it did not change. See [Python Version](#python-version). |
 | `environments` | `object \| null` | `old` and `new` markers of `tool.uv.environments` (arrays of strings), if they changed. `null` if they did not change. See [Supported Environments](#supported-environments). |
-| `repair` | `object \| null` | The repair of an environment that was unprotected with `uvrev unprotect`, done before the change: `mode` (`fast`: by the files changed since unprotecting, `full`: by the hash of every file), `packages` (the reinstalled packages) and `removed_files`. `null` if the environment was not unprotected. See [Hotfixes](#hotfixes-unprotect-and-protect). |
+| `repair` | `object \| null` | The repair of an environment that was unprotected with `uvrev unprotect`, done before the change: `mode` (`fast`: by the files changed since unprotecting, `full`: by the hash of every file), `packages` (the reinstalled packages), `removed_files` and `regenerated` (`true` if the files of the virtual environment itself were created again). `null` if the environment was not unprotected. See [Hotfixes](#hotfixes-unprotect-and-protect). |
 | `verify` | `object \| null` | The result of verifying the venv after the change (`--verify` or the setting `verify_after_change`): `problems`, `remaining_problems` and `fixed` like in the [report of `uvrev verify`](#reports-of-other-commands). `null` if it did not run. If problems remain, `status` is `"error"`, but the other fields still describe the change that was made. |
 | `error_message` | `string \| null` | The error, if `status` is `"error"`. |
 

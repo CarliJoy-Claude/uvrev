@@ -117,7 +117,7 @@ SUPPORTED_SPEC: Final[str] = (
 # Problems fixed by reinstalling the package
 REINSTALL_PROBLEMS: Final[frozenset[str]] = frozenset({"missing", "modified"})
 # The files a venv consists of itself, they are not installed by a package and
-# can not be verified or restored (only by creating the venv again).
+# can not be verified. ``uv venv --allow-existing`` creates them again in place.
 # In the root of the venv:
 VENV_ROOT_FILES: Final[frozenset[str]] = frozenset(
     {VENV_CONFIG_FILE, ".gitignore", "CACHEDIR.TAG", VENV_LOCK_FILE}
@@ -151,6 +151,7 @@ PROBLEM_DESCRIPTIONS: Final[Mapping[str, str]] = MappingProxyType(
         "modified": "modified",
         "not_synced": "not in sync with uv.lock",
         "untracked": "not installed by any package",
+        "venv_file": "file of the virtual environment itself changed",
     }
 )
 

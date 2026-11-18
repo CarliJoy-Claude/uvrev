@@ -11,10 +11,11 @@ import pytest
 from conftest import Invoker, writable_paths
 
 from uvrev.commands import git
-from uvrev.exceptions import VenvChangedError
+from uvrev.exceptions import SubprocessFailure
 from uvrev.marker import Marker, read_marker, write_marker
 from uvrev.protection import protect, unprotect, writable_venv
 from uvrev.repair import (
+    RepairResult,
     changed_since,
     mark_unprotected,
     repair,
@@ -219,6 +220,8 @@ class TestChangedSince:
             Problem("untracked", extra),
             Problem("untracked", script),
             Problem("untracked", orphan),
+            # the folder of the interpreter changed
+            Problem("venv_file", script.parent.resolve()),
         }
 
     @pytest.mark.parametrize("name", [".lock", "pyvenv.cfg"])
@@ -234,7 +237,7 @@ class TestChangedSince:
 
     @pytest.mark.parametrize("name", ["bin/activate", "bin/python"])
     def test_venv_file_changed(self, unprotected: UVRevProject, name: str) -> None:
-        """The files of the venv itself can not be restored"""
+        """The files of the venv itself are created again"""
         mark = marker(unprotected)
         assert mark is not None
         path = unprotected.venv_path / name
@@ -245,19 +248,31 @@ class TestChangedSince:
         else:
             path.write_text(path.read_text() + "\n# changed")
 
-        with pytest.raises(VenvChangedError, match=r"uvrev sync --clean") as error:
-            changed_since(unprotected, mark.stamp)
+        problems = changed_since(unprotected, mark.stamp)
 
-        assert error.value.path == unprotected.venv_path.resolve() / name
+        assert Problem("venv_file", unprotected.venv_path.resolve() / name) in problems
 
-    @pytest.mark.parametrize("name", ["pyvenv.cfg", "bin/python"])
-    def test_venv_file_missing(self, unprotected: UVRevProject, name: str) -> None:
+    @pytest.mark.parametrize("name", ["bin/python", "bin/activate"])
+    def test_scripts_folder_changed(self, unprotected: UVRevProject, name: str) -> None:
+        """Which files are next to the interpreter depends on the version of uv"""
         mark = marker(unprotected)
         assert mark is not None
-        (unprotected.venv_path / name).unlink()
+        path = unprotected.venv_path.resolve() / name
+        path.unlink()
 
-        with pytest.raises(VenvChangedError):
-            changed_since(unprotected, mark.stamp)
+        problems = changed_since(unprotected, mark.stamp)
+
+        assert Problem("venv_file", path.parent) in problems
+
+    def test_config_missing(self, unprotected: UVRevProject) -> None:
+        mark = marker(unprotected)
+        assert mark is not None
+        path = unprotected.venv_path.resolve() / "pyvenv.cfg"
+        path.unlink()
+
+        problems = changed_since(unprotected, mark.stamp)
+
+        assert problems == (Problem("venv_file", path),)
 
 
 class TestRepair:
@@ -290,7 +305,7 @@ class TestRepair:
         result = repair(unprotected)
 
         assert result is not None
-        assert (result.mode, result.packages, result.removed_files) == ("fast", (), ())
+        assert result == RepairResult("fast", (), (), regenerated=False)
         assert writable_paths(unprotected.venv_path) == ()
         assert marker(unprotected) is None
 
@@ -320,12 +335,60 @@ class TestRepair:
 
         assert not pycache.exists()
 
-    def test_venv_file_changed_keeps_mark(self, unprotected: UVRevProject) -> None:
-        mark = marker(unprotected)
-        activate = unprotected.venv_path / "bin" / "activate"
-        activate.write_text(activate.read_text() + "\n# changed")
+    def test_venv_files_created_again(self, unprotected: UVRevProject) -> None:
+        """In place: the packages and the venv are kept"""
+        venv = unprotected.venv_path
+        config = venv / "pyvenv.cfg"
+        original_config = config.read_text()
+        activate = venv / "bin" / "activate"
+        original_activate = activate.read_text()
+        activate.write_text(original_activate + "\n# changed")
+        (venv / "bin" / "python").unlink()
+        added = venv / "bin" / "python3.99"
+        added.symlink_to("python3")
+        # older versions of uv create it, newer ones not
+        pth = unprotected.site_packages[0] / "_virtualenv.pth"
+        pth.write_text("import os")
+        package_inode = module(unprotected).stat().st_ino
 
-        with pytest.raises(VenvChangedError):
+        result = repair(unprotected)
+
+        assert result is not None
+        assert result.regenerated
+        assert added.parent.resolve() / added.name in result.removed_files
+        assert not os.path.lexists(added)
+        assert activate.read_text() == original_activate
+        # the prompt (the name of the project) and the interpreter are kept
+        assert config.read_text() == original_config
+        assert unprotected.interpreter is not None
+        assert not pth.exists() or "import os" not in pth.read_text()
+        assert module(unprotected).stat().st_ino == package_inode
+        assert find_problems(unprotected) == ()
+        assert writable_paths(venv) == ()
+        assert marker(unprotected) is None
+
+    def test_config_created_again(self, unprotected: UVRevProject) -> None:
+        """Without pyvenv.cfg the prompt is the name of the project"""
+        config = unprotected.venv_path / "pyvenv.cfg"
+        config.unlink()
+
+        result = repair(unprotected)
+
+        assert result is not None
+        assert result.regenerated
+        assert "prompt = uvrev-venv-sample\n" in config.read_text()
+        assert find_problems(unprotected) == ()
+
+    def test_failure_keeps_mark(
+        self, unprotected: UVRevProject, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No interpreter for the pinned request"""
+        monkeypatch.setenv("UV_PYTHON_DOWNLOADS", "never")
+        mark = marker(unprotected)
+        unprotected.python_version_path.write_text("3.0.1\n")
+        (unprotected.venv_path / "bin" / "python").unlink()
+
+        with pytest.raises(SubprocessFailure, match="uv venv"):
             repair(unprotected)
 
         assert marker(unprotected) == mark
@@ -338,8 +401,11 @@ class TestRepair:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Without a reliable time every file is compared with its hash"""
-        # a change BEFORE the stamp: the fast repair would not see it
+        # changes BEFORE the stamp: the fast repair would not see them
         module(unprotected).write_text("print('hotfix')")
+        activate = unprotected.venv_path / "bin" / "activate"
+        original_activate = activate.read_text()
+        activate.write_text(original_activate + "\n# changed")
         extra = unprotected.site_packages[0] / "extra.py"
         extra.write_text("")
         path = unprotected.unprotected_marker_path
@@ -356,10 +422,12 @@ class TestRepair:
         assert result.mode == "full"
         assert result.packages == (SAMPLE,)
         assert result.removed_files == (extra,)
+        assert result.regenerated
         assert "hotfix" not in module(unprotected).read_text()
+        assert activate.read_text() == original_activate
         assert marker(unprotected) is None
         assert writable_paths(unprotected.venv_path) == ()
-        assert "uvrev sync --clean" in capsys.readouterr().err
+        assert "uvrev sync --clean" not in capsys.readouterr().err
 
 
 class TestCli:
@@ -399,8 +467,10 @@ class TestCli:
 
         result = invoke("protect", "--json")
 
-        assert json.loads(result.stdout)["repair"]["mode"] == "full"
-        assert "uvrev sync --clean" in result.stderr
+        repaired = json.loads(result.stdout)["repair"]
+        assert (repaired["mode"], repaired["regenerated"]) == ("full", True)
+        assert "files of the venv itself created again" in result.stderr
+        assert "uvrev sync --clean" not in result.stderr
 
     def test_other_environments_warning(
         self, invoke: Invoker, project: UVRevProject, fake_basedir: Path
@@ -425,6 +495,7 @@ class TestCli:
             "mode": "fast",
             "packages": [SAMPLE],
             "removed_files": [],
+            "regenerated": False,
         }
         assert report["all_changed_dependencies"] == ["six"]
         # repaired before the packages were added
@@ -469,20 +540,52 @@ class TestCli:
         assert "hotfix" in module(project).read_text()
         assert marker(project) == mark
 
-    def test_repair_fails(self, invoke: Invoker, project: UVRevProject) -> None:
+    def test_repair_fails(
+        self, invoke: Invoker, project: UVRevProject, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The environment stays marked and the command fails"""
+        monkeypatch.setenv("UV_PYTHON_DOWNLOADS", "never")
         invoke("unprotect")
         mark = marker(project)
-        activate = project.venv_path / "bin" / "activate"
-        activate.write_text(activate.read_text() + "\n# changed")
+        # no interpreter for the pinned request
+        project.python_version_path.write_text("3.0.1\n")
+        (project.venv_path / "bin" / "python").unlink()
 
         result = invoke("sync", "--json")
 
         assert result.exit_code == 1
         report: dict[str, Any] = json.loads(result.stdout)
         assert report["status"] == "error"
-        assert "uvrev sync --clean" in report["error_message"]
+        assert "uv venv" in report["error_message"]
         assert marker(project) == mark
+
+    def test_venv_file_repaired(self, invoke: Invoker, project: UVRevProject) -> None:
+        invoke("unprotect")
+        activate = project.venv_path / "bin" / "activate"
+        original = activate.read_text()
+        activate.write_text(original + "\n# changed")
+
+        result = invoke("sync", "--json")
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["repair"]["regenerated"] is True
+        assert activate.read_text() == original
+        assert marker(project) is None
+
+    def test_verify_fix_creates_venv_files_again(
+        self, invoke: Invoker, project: UVRevProject
+    ) -> None:
+        """verify can not find changes of the files of the venv itself"""
+        invoke("unprotect")
+        activate = project.venv_path / "bin" / "activate"
+        original = activate.read_text()
+        activate.write_text(original + "\n# changed")
+
+        assert invoke("verify").exit_code == 0
+        assert invoke("verify", "--fix").exit_code == 0
+
+        assert activate.read_text() == original
+        assert writable_paths(project.venv_path) == ()
 
     def test_verify_fix_removes_mark(
         self, invoke: Invoker, project: UVRevProject

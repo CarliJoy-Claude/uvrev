@@ -170,9 +170,19 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
   with file timestamps: take "now" from the filesystem (touch a file, read its
   ctime) and wait until its clock moved on (`wait_for_clock()`).
 - A valid venv contains only: the files in the `RECORD` of its packages, the
-  files of the venv itself (`is_venv_file()`, they can not be restored) and
-  bytecode of an existing source. `uv sync --reinstall` does not restore the
-  venv's own files.
+  files of the venv itself (`is_venv_file()`) and bytecode of an existing
+  source. `uv sync --reinstall` does not restore the venv's own files,
+  `uv venv --allow-existing` writes all of them again in place and keeps the
+  packages (`regenerate_venv()`): pass the prompt (uv would take the name of
+  the folder), but no `--python`: uv chooses by `.python-version` like
+  `uv sync`, which links a managed Python by its minor version
+  (`cpython-3.15-…`). An exact version would link the patch folder and break
+  transparent patch upgrades. Own files it did not write again keep their
+  old ctime and are removed. `uv sync` recreates the whole
+  venv if the interpreter is missing: never let it do that in a repair.
+- uv reinstalls a package that was replaced by another build of the same
+  version (`direct_url.json` points to another source than `uv.lock`), so a
+  file changed together with its `RECORD` entry is no case for the repair.
 - Settings: typed-settings with frozen dataclasses, `[uvrev]` table in
   `user_config_path("uvrev") / "config.toml"`, more files in `UVREV_SETTINGS`,
   overridable by `UVREV_*` environment variables.

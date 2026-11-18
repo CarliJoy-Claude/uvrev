@@ -129,7 +129,12 @@ class TestProtect:
         # nothing was changed in the meantime, so nothing is repaired
         data = report(invoke("protect", "--json"))
         assert (data["changed"], data["protected"], data["state"]) == (True, True, None)
-        assert data["repair"] == {"mode": "fast", "packages": [], "removed_files": []}
+        assert data["repair"] == {
+            "mode": "fast",
+            "packages": [],
+            "removed_files": [],
+            "regenerated": False,
+        }
 
     def test_repair(self, invoke: Invoker, synced_project: UVRevProject) -> None:
         report(invoke("unprotect", "--json"))
@@ -143,6 +148,7 @@ class TestProtect:
             "mode": "fast",
             "packages": ["sampleproject"],
             "removed_files": [str(extra)],
+            "regenerated": False,
         }
 
     def test_failure(

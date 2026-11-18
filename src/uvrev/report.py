@@ -108,7 +108,7 @@ class RepairSummary:
     >>> from pathlib import Path
     >>> result = RepairResult("fast", (NormalizedName("six"),), (Path("x.py"),))
     >>> RepairSummary.from_result(result)
-    RepairSummary(mode='fast', packages=('six',), removed_files=('x.py',))
+    RepairSummary(mode='fast', packages=('six',), removed_files=('x.py',), regenerated=False)
     >>> RepairSummary.from_result(None) is None
     True
     """
@@ -119,6 +119,8 @@ class RepairSummary:
     packages: tuple[str, ...]
     # removed files that no package installed
     removed_files: tuple[str, ...]
+    # True if the files of the venv itself were created again
+    regenerated: bool
 
     @classmethod
     def from_result(cls, result: RepairResult | None) -> Self | None:
@@ -128,6 +130,7 @@ class RepairSummary:
             mode=result.mode,
             packages=tuple(result.packages),
             removed_files=tuple(map(str, result.removed_files)),
+            regenerated=result.regenerated,
         )
 
 

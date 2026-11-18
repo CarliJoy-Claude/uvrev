@@ -73,15 +73,3 @@ class ChmodNotFoundError(click.ClickException):
             f"[uvrev] table of {config_file} "
             "or the environment variable UVREV_PROTECT=false."
         )
-
-
-class VenvChangedError(click.ClickException):
-    """A file of the venv itself was changed, it can not be repaired in place"""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        super().__init__(
-            f"{path} was changed or is missing. It belongs to the virtual "
-            "environment itself and is not part of a package, so it can not be "
-            "restored. Run 'uvrev sync --clean' to create the environment anew."
-        )
