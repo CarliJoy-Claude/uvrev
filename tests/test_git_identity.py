@@ -9,7 +9,7 @@ from conftest import Invoker
 
 from uvrev import constants
 from uvrev.commands import git
-from uvrev.environment import git_identity
+from uvrev.environment import git_identity, use_default_branch
 from uvrev.settings import Settings
 from uvrev.types import UVRevProject
 
@@ -20,9 +20,11 @@ def config(project: UVRevProject, key: str) -> str:
 
 @pytest.fixture
 def no_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A user without git identity that signs everything, e.g. with a missing key"""
+    """A user without git identity that signs everything, e.g. with a missing key,
+    and creates the branch master"""
     git_config = tmp_path / "gitconfig"
     git_config.write_text(
+        "[init]\ndefaultBranch = master\n"
         "[commit]\ngpgsign = true\n[tag]\ngpgsign = true\nforceSignAnnotated = true\n"
         "[gpg]\nprogram = uvrev-test-missing-gpg\n[user]\nuseConfigOnly = true\n"
     )
@@ -55,6 +57,9 @@ def test_create_and_change(
     assert config(project, "user.email") == git_identity()
     assert config(project, "commit.gpgsign") == "false"
     assert config(project, "tag.gpgsign") == "false"
+    # the default branch of the user is not used
+    branch = git("branch", "--show-current", project=project, capture_output=True)
+    assert branch.strip() == constants.DEFAULT_BRANCH
 
     # later revisions are committed and tagged without identity or key as well
     result = invoke("add", "peppercorn")
@@ -85,3 +90,18 @@ def test_fix(invoke: Invoker, fake_basedir: Path) -> None:
 
     assert config(project, "user.name") == "uvrev"
     assert config(project, "commit.gpgsign") == "false"
+
+
+def test_inside_other_repository(fake_basedir: Path) -> None:
+    """uv init creates no repository in a folder that is already in one:
+    the HEAD of the other repository is not changed"""
+    fake_basedir.mkdir(parents=True, exist_ok=True)
+    outer = UVRevProject(fake_basedir, Settings())
+    git("init", "--initial-branch=trunk", project=outer)
+    project = UVRevProject(fake_basedir / constants.DEFAULT_ENV, Settings())
+    project.project_path.mkdir()
+
+    use_default_branch(project)
+
+    head = git("symbolic-ref", "HEAD", project=outer, capture_output=True)
+    assert head.strip() == "refs/heads/trunk"

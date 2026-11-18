@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- `uvrev env create`: the git repository of a new environment uses the branch `main`. Before, git named it
+  after `init.defaultBranch` of the user, and without it `master`. Existing environments are not changed.
+
 ## [0.7] (2026-11-13)
 
 ### Added

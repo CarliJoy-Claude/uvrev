@@ -91,6 +91,7 @@ def create_env(
         ".",
         project=project,
     )
+    use_default_branch(project)
     target.joinpath("main.py").unlink(missing_ok=True)
     if python:
         # uv init only pins the minor version of the interpreter it found:
@@ -122,6 +123,34 @@ def create_env(
 
     mark_created(project)
     return project
+
+
+def use_default_branch(project: UVRevProject) -> None:
+    """Let the revisions be committed to the branch ``main``.
+
+    ``uv init`` runs ``git init``, which names the first branch after the
+    setting ``init.defaultBranch`` of the user, and without it ``master``
+    (``--initial-branch`` in https://git-scm.com/docs/git-init).
+    The repository has no commit yet, so the branch does not exist: pointing
+    ``HEAD`` to another name is all it takes to rename it, see
+    https://git-scm.com/docs/git-symbolic-ref
+
+    Not done with ``git init --initial-branch`` before ``uv init`` (uv would
+    then not write its ``.gitignore``), nor with ``init.defaultBranch`` in
+    ``GIT_CONFIG_COUNT`` (only git 2.31 and newer read it, older ones ignore
+    it, see https://git-scm.com/docs/git-config#ENVIRONMENT).
+
+    ``uv init`` creates no repository in a folder that is already in one:
+    then nothing is done, so the ``HEAD`` of the other repository stays.
+    """
+    if not (project.project_path / ".git").is_dir():
+        return
+    git(
+        "symbolic-ref",
+        "HEAD",
+        f"refs/heads/{constants.DEFAULT_BRANCH}",
+        project=project,
+    )
 
 
 def git_identity(

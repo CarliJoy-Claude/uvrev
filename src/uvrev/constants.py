@@ -18,6 +18,8 @@ DEFAULT_ENV: Final[str] = "base"
 # environment variable with the name of the environment, if --env is not given
 ENV_VARIABLE: Final[str] = "UVREV_ENV"
 INITIAL_COMMIT_MSG: Final[str] = "(rev 0) Initial project creation"
+# branch of the revisions in the git repository of an environment
+DEFAULT_BRANCH: Final[str] = "main"
 PYPROJECT_FILE: Final[str] = "pyproject.toml"
 LOCK_FILE: Final[str] = "uv.lock"
 # Python request (e.g. a version or range), written by uv python pin and read by uv
