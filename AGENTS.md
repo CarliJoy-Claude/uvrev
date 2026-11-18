@@ -145,8 +145,9 @@ project folder. Environments are uv projects with `[tool.uv] package = false`.
 - A protected `.venv` must stay usable. uv locks a venv with `.venv/.lock`
   before it uses it, also to only read it (`uv sync --check`), and opens the
   file for writing. If it can not, uv goes on without the lock and only warns
-  with `--verbose`. So `protect_venv()` keeps this one file writable for the
-  owner. `uv run --no-sync`, `uv tree`, `uv pip list` and `uv export` need no
+  with `--verbose`. So `protect_venv()` keeps this file writable for the
+  owner, and `pyvenv.cfg` as well, which uv rewrites (e.g. if the interpreter
+  changed). A change of `pyvenv.cfg` is no problem for the repair. `uv run --no-sync`, `uv tree`, `uv pip list` and `uv export` need no
   write access. To check such things, run as a normal user under `strace`
   and look for `EACCES`.
 - Every uv call that changes a `.venv` runs inside `writable_venv()` (tool

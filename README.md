@@ -92,8 +92,10 @@ So nobody can change the installed packages by accident, e.g. with `pip install`
 uvrev makes the `.venv` writable (`chmod -R u+w .venv`) only while `uv` changes it and protects it
 again afterwards, even if `uv` fails. `uvrev run` syncs the environment first if needed and then
 runs the command with the protected `.venv`. The environments of `uvrev tool run` are protected as well.
-Only the lock file of uv (`.venv/.lock`, an empty file) stays writable for its owner: uv needs it to
-lock the `.venv`, also when it only reads it.
+Two files stay writable for their owner, as uv writes them to use the `.venv`: its lock file
+(`.venv/.lock`, an empty file), which uv needs to lock the `.venv` also when it only reads it,
+and the configuration of the `.venv` (`.venv/pyvenv.cfg`), which uv rewrites e.g. if the interpreter changed.
+No file can be added, removed or renamed.
 
 uv hardlinks the installed files from its cache, so `chmod` also changes the permissions of
 these files in the uv cache, and with that in other environments using the same files.
@@ -133,8 +135,9 @@ The `.venv` and the uv cache are kept, so running processes are not disturbed mo
 
 What the repair can not do:
 
-- The files of the virtual environment itself (`pyvenv.cfg`, the `python` links and the `activate` scripts)
+- The files of the virtual environment itself (the `python` links and the `activate` scripts)
   are not part of any package. If one of them was changed, the repair fails and the environment stays marked.
+  Changes of `pyvenv.cfg` are accepted, it is written by uv and stays writable.
   Run `uvrev sync --clean`.
 - If `uvrev unprotect` did not finish (e.g. it was killed) or `.unprotected` was changed, there is no time
   that can be trusted. `uvrev unprotect` still makes the `.venv` writable and warns. The repair then

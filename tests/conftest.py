@@ -113,7 +113,8 @@ def sample_project(fake_basedir: Path, data_dir: Path) -> UVRevProject:
 def writable_paths(venv: Path) -> tuple[Path, ...]:
     """All files and directories of the venv with any write permission.
 
-    Without the lock file of uv, which stays writable in a protected venv.
+    Without the files that stay writable in a protected venv (the lock file of
+    uv and pyvenv.cfg).
     """
     paths = (venv, *venv.rglob("*")) if venv.is_dir() else ()
     return tuple(
@@ -121,7 +122,7 @@ def writable_paths(venv: Path) -> tuple[Path, ...]:
         for path in paths
         if not path.is_symlink()
         and path.lstat().st_mode & 0o222
-        and path != venv / constants.VENV_LOCK_FILE
+        and path.relative_to(venv).as_posix() not in constants.WRITABLE_VENV_FILES
     )
 
 

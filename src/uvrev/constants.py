@@ -30,6 +30,10 @@ PYTHON_VERSION_LOCK_FILE: Final[str] = ".python-version.lock"
 CREATED_MARKER_FILE: Final[str] = ".uvrev_created_successfully"
 # in the venv: uv locks the venv with it, also to only read it (uv sync --check)
 VENV_LOCK_FILE: Final[str] = ".lock"
+# in the venv: its configuration, written by uv (e.g. the version of the interpreter)
+VENV_CONFIG_FILE: Final[str] = "pyvenv.cfg"
+# files in the root of a protected venv that stay writable for the owner
+WRITABLE_VENV_FILES: Final[tuple[str, ...]] = (VENV_LOCK_FILE, VENV_CONFIG_FILE)
 # exists while the venv is unprotected by ``uvrev unprotect``, see marker.py
 UNPROTECTED_MARKER_FILE: Final[str] = ".unprotected"
 # name of the entry for Python where it is compared like a package
@@ -116,7 +120,7 @@ REINSTALL_PROBLEMS: Final[frozenset[str]] = frozenset({"missing", "modified"})
 # can not be verified or restored (only by creating the venv again).
 # In the root of the venv:
 VENV_ROOT_FILES: Final[frozenset[str]] = frozenset(
-    {"pyvenv.cfg", ".gitignore", "CACHEDIR.TAG", VENV_LOCK_FILE}
+    {VENV_CONFIG_FILE, ".gitignore", "CACHEDIR.TAG", VENV_LOCK_FILE}
 )
 # next to the interpreter (bin or Scripts):
 VENV_SCRIPTS: Final[frozenset[str]] = frozenset(
@@ -152,8 +156,8 @@ PROBLEM_DESCRIPTIONS: Final[Mapping[str, str]] = MappingProxyType(
 
 # --- repair.py
 # Files of the venv itself that uv creates or rewrites while using the venv
-# (e.g. its lock). A change of them is harmless.
-VOLATILE_VENV_FILES: Final[frozenset[str]] = frozenset(VENV_ROOT_FILES - {"pyvenv.cfg"})
+# (e.g. its lock and its configuration). A change of them is harmless.
+VOLATILE_VENV_FILES: Final[frozenset[str]] = VENV_ROOT_FILES
 
 
 def config_file() -> Path:

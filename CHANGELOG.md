@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `.venv/pyvenv.cfg` stays writable for its owner in a protected `.venv`, like the lock file of uv:
+  uv rewrites it, e.g. if the interpreter changed. A changed `pyvenv.cfg` no longer lets the repair
+  after `uvrev unprotect` fail.
+
 ### Fixed
 
 - `uvrev env create`: the git repository of a new environment uses the branch `main`. Before, git named it

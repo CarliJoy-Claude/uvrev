@@ -221,15 +221,18 @@ class TestChangedSince:
             Problem("untracked", orphan),
         }
 
-    def test_volatile_venv_file(self, unprotected: UVRevProject) -> None:
-        """uv creates and uses .venv/.lock, that is no change of the venv"""
+    @pytest.mark.parametrize("name", [".lock", "pyvenv.cfg"])
+    def test_volatile_venv_file(self, unprotected: UVRevProject, name: str) -> None:
+        """uv creates and uses .venv/.lock and rewrites pyvenv.cfg (it stays
+        writable in a protected venv), that is no change of the venv"""
         mark = marker(unprotected)
         assert mark is not None
-        (unprotected.venv_path / ".lock").write_text("")
+        path = unprotected.venv_path / name
+        path.write_text(path.read_text() + "\n# changed")
 
         assert changed_since(unprotected, mark.stamp) == ()
 
-    @pytest.mark.parametrize("name", ["pyvenv.cfg", "bin/activate", "bin/python"])
+    @pytest.mark.parametrize("name", ["bin/activate", "bin/python"])
     def test_venv_file_changed(self, unprotected: UVRevProject, name: str) -> None:
         """The files of the venv itself can not be restored"""
         mark = marker(unprotected)
@@ -319,8 +322,8 @@ class TestRepair:
 
     def test_venv_file_changed_keeps_mark(self, unprotected: UVRevProject) -> None:
         mark = marker(unprotected)
-        config = unprotected.venv_path / "pyvenv.cfg"
-        config.write_text(config.read_text() + "\n# changed")
+        activate = unprotected.venv_path / "bin" / "activate"
+        activate.write_text(activate.read_text() + "\n# changed")
 
         with pytest.raises(VenvChangedError):
             repair(unprotected)
@@ -470,8 +473,8 @@ class TestCli:
         """The environment stays marked and the command fails"""
         invoke("unprotect")
         mark = marker(project)
-        config = project.venv_path / "pyvenv.cfg"
-        config.write_text(config.read_text() + "\n# changed")
+        activate = project.venv_path / "bin" / "activate"
+        activate.write_text(activate.read_text() + "\n# changed")
 
         result = invoke("sync", "--json")
 

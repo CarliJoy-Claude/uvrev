@@ -1,8 +1,9 @@
 """Protect a venv against accidental changes by removing write permissions.
 
 ``chmod`` makes the venv read-only or writable. A protected venv can still be
-used: only the lock file of uv stays writable, as uv needs it to read the venv. ``writable()`` is for the
-changes uvrev makes itself: writable within the block, protected afterwards.
+used: only the lock file of uv and the configuration of the venv stay writable,
+see ``keep_writable``. ``writable()`` is for the changes uvrev makes itself:
+writable within the block, protected afterwards.
 
 Unprotecting for a hotfix by the user, and repairing afterwards, is in
 ``repair.py`` and ``marker.py``.
@@ -37,28 +38,32 @@ def chmod(venv: Path, mode: str, command: str) -> None:
     run_cmd(command, "-R", mode, venv.name, cwd=venv.parent)
 
 
-def keep_lock_writable(venv: Path) -> None:
-    """Let the owner write the lock file of a protected venv.
+def keep_writable(venv: Path) -> None:
+    """Let the owner write the files of a protected venv that uv writes to use it.
 
-    uv locks a venv before it uses it, also to only read it
-    (``uv sync --check``), and opens ``.venv/.lock`` for writing to do so.
-    If it can not, uv goes on without the lock (it only warns with
-    ``--verbose``) and could read a venv that another uv is changing.
-    The file is empty and the folder stays read-only, so nothing else
-    can be changed.
+    - ``.lock``: uv locks a venv before it uses it, also to only read it
+      (``uv sync --check``), and opens ``.venv/.lock`` for writing to do so.
+      If it can not, uv goes on without the lock (it only warns with
+      ``--verbose``) and could read a venv that another uv is changing.
+    - ``pyvenv.cfg``: uv rewrites it, e.g. if the interpreter changed.
+
+    The folder stays read-only, so no file can be added, removed or renamed.
+    Links are not followed.
     """
-    lock = venv / constants.VENV_LOCK_FILE
-    if lock.is_file() and not lock.is_symlink():
-        lock.chmod(lock.stat().st_mode | stat.S_IWUSR)
+    for name in constants.WRITABLE_VENV_FILES:
+        path = venv / name
+        if path.is_file() and not path.is_symlink():
+            path.chmod(path.stat().st_mode | stat.S_IWUSR)
 
 
 def protect_venv(venv: Path, settings: Settings) -> None:
     """Remove write permissions, so the venv can not be changed by accident.
 
-    Only its lock file stays writable for the owner, see ``keep_lock_writable``.
+    Only the lock file of uv and the configuration of the venv stay writable for
+    the owner, see ``keep_writable``.
     """
     chmod(venv, settings.protect_mode, settings.chmod_command)
-    keep_lock_writable(venv)
+    keep_writable(venv)
 
 
 def unprotect_venv(venv: Path, settings: Settings) -> None:

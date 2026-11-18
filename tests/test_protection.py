@@ -51,23 +51,28 @@ class TestProtect:
         assert mode(venv / "bin" / "script") == 0o555
         assert writable_paths(venv) == ()
 
-    def test_lock_stays_writable_for_owner(self, project: UVRevProject) -> None:
-        """uv opens the lock of the venv for writing, also to only read the venv"""
-        lock = project.venv_path / constants.VENV_LOCK_FILE
-        lock.touch()
-        lock.chmod(0o664)
+    @pytest.mark.parametrize("name", constants.WRITABLE_VENV_FILES)
+    def test_stays_writable_for_owner(self, project: UVRevProject, name: str) -> None:
+        """uv opens the lock of the venv for writing, also to only read the venv,
+        and rewrites pyvenv.cfg"""
+        path = project.venv_path / name
+        path.touch()
+        path.chmod(0o664)
 
         protect(project)
 
-        assert mode(lock) == 0o644
+        assert mode(path) == 0o644
         assert mode(project.venv_path) == 0o555
 
-    def test_linked_lock_untouched(self, project: UVRevProject, tmp_path: Path) -> None:
-        """A lock that is a link is not followed: its target stays as it is"""
+    @pytest.mark.parametrize("name", constants.WRITABLE_VENV_FILES)
+    def test_linked_writable_untouched(
+        self, project: UVRevProject, tmp_path: Path, name: str
+    ) -> None:
+        """A link is not followed: its target stays as it is"""
         outside = tmp_path / "outside"
         outside.touch()
         outside.chmod(0o444)
-        (project.venv_path / constants.VENV_LOCK_FILE).symlink_to(outside)
+        (project.venv_path / name).symlink_to(outside)
 
         protect(project)
 
